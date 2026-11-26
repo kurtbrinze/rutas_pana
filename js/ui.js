@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.1';
+  const VERSION = 'V.2';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -642,8 +642,25 @@
     } catch (e) { toast('No pude leer ese respaldo: ' + e.message, 'bad'); }
   }
 
+  /* Instalación como app (PWA) */
+  let avisoInstalar = null;
+  function instalacion() {
+    const b = $('#btnInstalar');
+    const instalada = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); avisoInstalar = e; if (!instalada) b.hidden = false; });
+    window.addEventListener('appinstalled', () => { b.hidden = true; avisoInstalar = null; toast('Rutas Súper quedó instalada.', 'ok'); });
+    b.addEventListener('click', async () => {
+      if (!avisoInstalar) return;
+      avisoInstalar.prompt();
+      try { await avisoInstalar.userChoice; } catch (_) {}
+      avisoInstalar = null; b.hidden = true;
+    });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
   function iniciar() {
     $('#ver').textContent = VERSION;
+    instalacion();
     $$('.tabs button').forEach((b) => b.addEventListener('click', () => irA(b.dataset.tab)));
     $('#btnReiniciar').addEventListener('click', reiniciar);
     $('#app').addEventListener('click', onClick);

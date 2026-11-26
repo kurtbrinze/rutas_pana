@@ -34,3 +34,8 @@ js/vendor/xlsx.full.min.js  SheetJS 0.18.5
 ```
 
 Al publicar una versión nueva, subir `VERSION` en `js/ui.js`.
+
+## Instalación y Centro de Control
+
+- Se instala como app con el botón “Instalar app” (Chrome / Edge). Nombre corto **Rutas Súper**, icono propio (camión con barras) e `id` propio en el manifiesto, para no confundirse con las otras apps de Rinze.
+- En el Centro de Control se sirve desde `/apps/rutas/` (mismo sitio del centro), para que pueda elegir las carpetas Hx y Backup estando embebida. Las carpetas y la configuración se guardan por sitio: dentro del centro hay que elegirlas una vez.

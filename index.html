@@ -3,8 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Resumen Rutas Supermercados · Rinze Studio</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230A0E17'/%3E%3Cpath d='M10 24V8h7a4.5 4.5 0 0 1 0 9h-7M16 17l6 7' fill='none' stroke='%2300FF88' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<title>Rutas Súper · Resumen Rutas Supermercados</title>
+<meta name="theme-color" content="#0A0E17">
+<meta name="application-name" content="Rutas Súper">
+<meta name="apple-mobile-web-app-title" content="Rutas Súper">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="description" content="Resumen AM/PM de rutas de supermercados · Rinze Studio">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Carlito:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/app.css">
@@ -26,7 +34,7 @@
     <div class="wm"><b>Rinze</b><span>STUDIO</span></div>
   </div>
   <div class="sep"></div>
-  <div class="app-name">Resumen Rutas Supermercados</div>
+  <div class="app-name"><img src="icons/icon.svg" alt="" width="26" height="26">Resumen Rutas Supermercados</div>
   <nav class="tabs" aria-label="Módulos">
     <button type="button" data-tab="resumen" class="on">Resumen</button>
     <button type="button" data-tab="cadenas">Cadenas</button>
@@ -36,6 +44,10 @@
     <button type="button" data-tab="config">Configuración</button>
   </nav>
   <div class="top-acts">
+    <button type="button" class="btn ghost" id="btnInstalar" hidden title="Instalar como aplicación en esta PC">
+      <svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="m9 9 3 3 3-3M12 6v6"/></svg>
+      Instalar app
+    </button>
     <button type="button" class="btn ghost" id="btnReiniciar" title="Quitar los archivos cargados">
       <svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
       Empezar de nuevo

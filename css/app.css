@@ -22,7 +22,8 @@ svg.i.sm{width:16px;height:16px}
 .brand .wm b{display:block;font-size:13px;font-weight:700}
 .brand .wm span{display:block;font-size:8px;font-weight:600;letter-spacing:.28em;color:var(--tx2);margin-top:3px}
 .sep{width:1px;height:26px;background:var(--line);flex:none}
-.app-name{font-size:14px;font-weight:600;white-space:nowrap}
+.app-name{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;white-space:nowrap}
+.app-name img{border-radius:7px;flex:none}
 .tabs{display:flex;gap:2px;margin-left:8px;flex-wrap:wrap}
 .tabs button{height:36px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--tx2);font-size:13px;font-weight:500}
 .tabs button:hover{background:var(--s2);color:var(--tx)}

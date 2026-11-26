@@ -4,7 +4,8 @@
   'use strict';
   const DB = 'rutas_pana', STORE = 'carpetas';
   const soporta = () => typeof window.showDirectoryPicker === 'function';
-  const embebida = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  // Solo molesta un marco de OTRO sitio: desde /apps/rutas/ del Centro de Control (mismo sitio) sí se pueden elegir carpetas.
+  const embebida = (() => { try { if (window.self === window.top) return false; void window.top.location.href; return false; } catch (_) { return true; } })();
 
   function abrirDB() {
     return new Promise((ok, mal) => {
