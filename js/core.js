@@ -284,8 +284,8 @@
   }
 
   /** Trabajo de cada verificadora en una jornada (día de verificación). */
-  function verificacion(est, cfg, dia) {
-    const ls = est.lineas.filter((l) => l.verif && l.verif.d === dia);
+  function verificacion(est, cfg, dia, clase) {
+    const ls = est.lineas.filter((l) => l.verif && l.verif.d === dia && (!clase || l.clase === clase));
     const nombres = {}; cfg.verificadoras.forEach((v) => { nombres[v.codigo] = v.nombre; });
     const m = {};
     ls.forEach((l) => {
@@ -304,54 +304,74 @@
     return { dia, filas, tot, ini: Math.min(...filas.map((f) => f.ini)), fin: Math.max(...filas.map((f) => f.fin)) };
   }
 
-  /* ---------- Historial ---------- */
-  /** Foto compacta de un turno para guardar en el historial. */
-  function fotoHistorial(est, cfg, turno, archivos) {
-    const ls = est.lineas.filter((l) => l.clase === turno);
-    const m = {};
-    ls.forEach((l) => {
-      const k = [l.ruta, l.cliente, l.codigo, l.tipo, l.verifUsuario].join('|');
-      const o = m[k] = m[k] || [l.ruta, l.cliente, l.clienteNombre, l.cad ? l.cad.nombre : '', l.codigo, l.tipo, l.verifUsuario, 0, 0];
-      o[7] += l.cantidad; o[8] = Math.round((o[8] + l.monto) * 100) / 100;
-    });
-    const nombres = nombreRutaDatos(est.lineas);
-    const rutas = {}; ls.forEach((l) => { rutas[l.ruta] = nombres[l.ruta] || ''; });
-    const resAll = resumen(est, cfg, turno, false), resSup = resumen(est, cfg, turno, true);
+  /* ---------- Cierre del día ----------
+     El cierre es el registro oficial del día de operación D: lo que se cargó en la
+     mañana (AM, crudo con fecha D) y en la tarde (PM, crudo con fecha D+1).
+     Lo verificado ayer (AYER) pertenece al cierre anterior y no se guarda. */
+  const CAMPOS = ['clase', 'fecha', 'tipo', 'cliente', 'clienteNombre', 'tienda', 'ruta', 'vale', 'verifUsuario', 'verifD', 'verifM', 'codigo', 'cantidad', 'monto'];
+  function fotoCierre(est, archivos) {
+    const ls = est.lineas.filter((l) => l.clase === 'AM' || l.clase === 'PM');
+    const nombres = nombreRutaDatos(est.lineas), rutas = {};
+    ls.forEach((l) => { rutas[l.ruta] = nombres[l.ruta] || ''; });
     return {
-      app: 'rutas_pana', version: 1, turno, fecha: turno === 'AM' ? est.amFecha : est.pmFecha,
-      corte: { dia: est.corteDia, hora: hora(est.corteMin) }, guardado: new Date().toISOString(),
-      archivos: archivos.map((a) => a.nombre), rutas,
-      columnas: ['ruta', 'cliente', 'clienteNombre', 'cadena', 'codigo', 'tipo', 'verificadora', 'cantidad', 'monto'],
-      filas: Object.values(m),
-      resumen: { todos: { cols: resAll.cols, filas: resAll.filas.map((f) => [f.ruta, f.nombre, f.vals]) }, super: { cols: resSup.cols, filas: resSup.filas.map((f) => [f.ruta, f.nombre, f.vals]) } }
+      app: 'rutas_pana', tipo: 'cierre', version: 2, dia: est.corteDia, corteHora: hora(est.corteMin), pmFecha: est.pmFecha,
+      guardado: new Date().toISOString(), archivos: archivos.map((a) => a.nombre), rutas, campos: CAMPOS,
+      lineas: ls.map((l) => [l.clase, l.fecha, l.tipo, l.cliente, l.clienteNombre, l.tienda, l.ruta, l.vale, l.verifUsuario,
+        l.verif ? l.verif.d : '', l.verif ? l.verif.m : null, l.codigo, l.cantidad, l.monto])
     };
   }
-
-  /** Totales por fecha para la tendencia. */
-  function tendencia(fotos, f) {
-    const pts = fotos.filter((x) => f.turno === 'Ambos' || x.turno === f.turno).map((x) => {
-      let u = 0;
-      x.filas.forEach((r) => { if ((f.ruta === '*' || r[0] === f.ruta) && (f.clave === '*' || r[4] === f.clave) && r[5] !== 'Cambios' && (!f.rutas || f.rutas.has(r[0]))) u += r[7]; });
-      return { fecha: x.fecha, turno: x.turno, u };
+  /** Reconstruye los datos de un cierre guardado para que los módulos lo usen igual que unos crudos. */
+  function estDesdeCierre(f, cfg) {
+    const ix = {}; (f.campos || CAMPOS).forEach((k, i) => { ix[k] = i; });
+    const lineas = f.lineas.map((r) => {
+      const g = (k) => r[ix[k]];
+      const vd = g('verifD');
+      return { clase: g('clase'), fecha: g('fecha'), tipo: g('tipo'), cliente: g('cliente'), clienteNombre: g('clienteNombre'), tienda: g('tienda'),
+        ruta: g('ruta'), rutaNombre: (f.rutas || {})[g('ruta')] || '', vale: g('vale'), verifUsuario: g('verifUsuario'),
+        verif: vd ? { d: vd, m: g('verifM') } : null, sinVerif: !vd, codigo: g('codigo'), cantidad: g('cantidad'), monto: g('monto'),
+        cad: cadenaDe(g('clienteNombre'), cfg.cadenas) };
     });
-    const m = {}; pts.forEach((p) => { m[p.fecha] = (m[p.fecha] || 0) + p.u; });
-    return Object.keys(m).sort().map((d) => ({ fecha: d, u: m[d] }));
+    const [h, m] = String(f.corteHora || '0:0').split(':').map(Number);
+    return { lineas, corteDia: f.dia, corteMin: (h || 0) * 60 + (m || 0), amFecha: f.dia, pmFecha: f.pmFecha,
+      hayAM: lineas.some((l) => l.clase === 'AM'), hayPM: lineas.some((l) => l.clase === 'PM'), fuente: 'cierre', guardado: f.guardado };
+  }
+  /** Resumen liviano de un cierre para el índice del historial (venta normal por clase, ruta y clave). */
+  function indiceDia(f) {
+    const ix = {}; (f.campos || CAMPOS).forEach((k, i) => { ix[k] = i; });
+    const m = {}; let cambios = 0, am = 0, pm = 0;
+    f.lineas.forEach((r) => {
+      const u = r[ix.cantidad];
+      if (r[ix.tipo] === 'Cambios') { cambios += u; return; }
+      if (r[ix.clase] === 'AM') am += u; else pm += u;
+      const k = r[ix.clase] + '|' + r[ix.ruta] + '|' + r[ix.codigo];
+      m[k] = (m[k] || 0) + u;
+    });
+    return { dia: f.dia, corteHora: f.corteHora, guardado: f.guardado, rutas: f.rutas || {}, am, pm, cambios,
+      agg: Object.entries(m).map(([k, u]) => k.split('|').concat(u)) };
   }
 
-  /** Pronóstico por clave: promedio de los últimos N días iguales (mismo día de la semana). */
-  function pronostico(fotos, cfg, f) {
-    const dow = (d) => partes(d).dow;
-    const sel = fotos.filter((x) => (f.turno === 'Ambos' || x.turno === f.turno) && dow(x.fecha) === f.dow);
-    const porFecha = {};
-    sel.forEach((x) => {
-      const t = porFecha[x.fecha] = porFecha[x.fecha] || {};
-      x.filas.forEach((r) => { if (r[5] === 'Cambios') return; if (f.rutas && !f.rutas.has(r[0])) return; t[r[4]] = (t[r[4]] || 0) + r[7]; });
+  /** Unidades por día de operación para la tendencia. f: { turno: 'Ambos'|'AM'|'PM', ruta, clave, rutas: Set|null } */
+  function tendencia(dias, f) {
+    return dias.slice().sort((a, b) => a.dia.localeCompare(b.dia)).map((d) => {
+      let u = 0;
+      d.agg.forEach(([cl, r, c, n]) => { if ((f.turno === 'Ambos' || cl === f.turno) && (f.ruta === '*' || r === f.ruta) && (f.clave === '*' || c === f.clave) && (!f.rutas || f.rutas.has(r))) u += n; });
+      return { fecha: d.dia, u };
     });
-    const fechas = Object.keys(porFecha).sort().slice(-(f.n || 4));
-    const cods = new Set(); fechas.forEach((d) => Object.keys(porFecha[d]).forEach((c) => cods.add(c)));
+  }
+
+  /** Pronóstico por clave: promedio de los últimos N cierres del mismo día de la semana. */
+  function pronostico(dias, cfg, f) {
+    const sel = dias.filter((d) => partes(d.dia).dow === f.dow).sort((a, b) => a.dia.localeCompare(b.dia)).slice(-(f.n || 4));
+    const fechas = sel.map((d) => d.dia);
+    const porFecha = sel.map((d) => {
+      const t = {};
+      d.agg.forEach(([cl, r, c, n]) => { if ((f.turno === 'Ambos' || cl === f.turno) && (!f.rutas || f.rutas.has(r))) t[c] = (t[c] || 0) + n; });
+      return t;
+    });
+    const cods = new Set(); porFecha.forEach((t) => Object.keys(t).forEach((c) => cods.add(c)));
     const ux = {}; cfg.claves.forEach((c) => { ux[c.codigo] = c; });
     const filas = ordenClaves(cods, cfg).map((c) => {
-      const serie = fechas.map((d) => porFecha[d][c] || 0);
+      const serie = porFecha.map((t) => t[c] || 0);
       const prom = serie.reduce((a, b) => a + b, 0) / (serie.length || 1);
       const ult = serie[serie.length - 1] || 0;
       const par = ux[c] && +ux[c].parrilla ? Math.ceil(prom / +ux[c].parrilla) : null;
@@ -361,5 +381,5 @@
   }
 
   root.Core = { norm, up, fechaDe, leerFilas, leerLibro, clasificar, cadenaDe, resumen, deteccion, matrizCadenas, cambios, verificacion,
-    fotoHistorial, tendencia, pronostico, sumarDias, tituloResumen, fechaCorta, hora, partes, MESES_L, DIAS_C };
+    fotoCierre, estDesdeCierre, indiceDia, tendencia, pronostico, sumarDias, tituloResumen, fechaCorta, hora, partes, MESES_L, DIAS_C };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.3';
+  const VERSION = 'V.4';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -16,15 +16,19 @@
     up: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
     dn: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
     del: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>',
+    izq: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
+    der: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
     xls: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>'
   };
 
   let cfg = window.Config.cargar();
   const S = {
-    tab: 'resumen', archivos: [], est: null, turno: 'AM', solo: false, canvas: null,
+    tab: 'resumen', archivos: [], est: null, turno: 'AM', solo: false, canvas: null, modo: 'whatsapp',
+    // De dónde salen los datos de Cadenas, Cambios y Verificación: 'vivo' (crudos cargados) o la fecha de un cierre.
+    fuente: 'vivo', cierres: { lista: null, cache: {} },
     cad: { vista: 'cadena', cadena: '*', carga: 'Todo', tipo: 'Normal', otros: true },
-    camb: { carga: 'Todo' }, verJ: 'hoy', cfgSec: 'rutas',
-    hist: { fotos: null, turno: 'Ambos', ruta: '*', clave: '*', soloImg: true, dow: null, fTurno: 'Ambos' }
+    camb: { carga: 'Todo' }, verJ: 'dia', cfgSec: 'rutas',
+    hist: { indice: null, turno: 'Ambos', ruta: '*', clave: '*', soloImg: true, dow: null, fTurno: 'Ambos' }
   };
 
   /* ---------- utilidades ---------- */
@@ -36,6 +40,7 @@
   function guardarCfg(recalcular = true) {
     window.Config.guardar(cfg);
     if (recalcular && S.archivos.length) S.est = C.clasificar(S.archivos, cfg);
+    if (recalcular) S.cierres.cache = {};
   }
   const fechaTxt = (d) => C.fechaCorta(d);
   const hoyTxt = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); };
@@ -54,8 +59,92 @@
     if (!S.archivos.length) return;
     S.est = C.clasificar(S.archivos, cfg);
     S.turno = S.est.hayAM ? 'AM' : 'PM';
+    // Después de la 1 de la tarde lo normal es que sea el cierre del día.
+    S.modo = S.est.corteMin >= 13 * 60 ? 'cierre' : 'whatsapp';
+    S.fuente = 'vivo';
     pintar();
     avisarCentro();
+    guardarSesion();
+  }
+
+  /* ---------- sesión: lo último cargado sigue ahí al volver a abrir la app ---------- */
+  const SES_DB = 'rutas_pana_sesion';
+  function sesDB() { return new Promise((ok, mal) => { const r = indexedDB.open(SES_DB, 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => ok(r.result); r.onerror = () => mal(r.error); }); }
+  async function guardarSesion() {
+    try {
+      const db = await sesDB();
+      const datos = S.archivos.length ? { archivos: S.archivos.map((a) => ({ nombre: a.nombre, fecha: a.fecha, lineas: a.lineas.map((l) => { const o = Object.assign({}, l); delete o.cad; return o; }), file: a.file || null })), modo: S.modo, solo: S.solo, guardado: Date.now() } : null;
+      await new Promise((ok) => { const t = db.transaction('s', 'readwrite'); datos ? t.objectStore('s').put(datos, 'vivo') : t.objectStore('s').delete('vivo'); t.oncomplete = ok; t.onerror = ok; });
+    } catch (_) { /* sin IndexedDB solo se pierde la sesión */ }
+  }
+  async function leerSesion() {
+    try {
+      const db = await sesDB();
+      return await new Promise((ok) => { const r = db.transaction('s').objectStore('s').get('vivo'); r.onsuccess = () => ok(r.result || null); r.onerror = () => ok(null); });
+    } catch (_) { return null; }
+  }
+
+  /* ---------- cierres guardados en Hx\Cierres ---------- */
+  const NOMBRE_CIERRE = /^(\d{4}-\d{2}-\d{2})\.json$/;
+  async function dirCierres(pedir) {
+    const hx = await K.obtener('hx', pedir);
+    return hx ? K.subcarpeta(hx, 'Cierres') : null;
+  }
+  async function listarCierres(pedir) {
+    const dir = await dirCierres(pedir);
+    if (!dir) return null;
+    S.cierres.lista = (await K.listar(dir, '.json')).map((n) => (n.match(NOMBRE_CIERRE) || [])[1]).filter(Boolean).sort();
+    return S.cierres.lista;
+  }
+  async function abrirCierre(dia, pedir = true) {
+    if (!S.cierres.cache[dia]) {
+      const dir = await dirCierres(pedir);
+      if (!dir) throw new Error('Sin acceso a la carpeta Hx.');
+      S.cierres.cache[dia] = C.estDesdeCierre(await K.leerJSON(dir, dia + '.json'), cfg);
+    }
+    S.fuente = dia;
+    return S.cierres.cache[dia];
+  }
+  /** Datos que usan Cadenas, Cambios y Verificación. */
+  const datos = () => S.fuente === 'vivo' ? S.est : S.cierres.cache[S.fuente] || null;
+
+  async function leerIndice(dir) { try { return await K.leerJSON(dir, '_indice.json'); } catch (_) { return { version: 1, dias: {} }; } }
+  async function reconstruirIndice() {
+    const dir = await dirCierres(true); if (!dir) throw new Error('Sin acceso a la carpeta Hx.');
+    const ind = { version: 1, dias: {} };
+    for (const n of await K.listar(dir, '.json')) {
+      const m = n.match(NOMBRE_CIERRE); if (!m) continue;
+      try { ind.dias[m[1]] = C.indiceDia(await K.leerJSON(dir, n)); } catch (_) {}
+    }
+    await K.escribir(dir, '_indice.json', JSON.stringify(ind));
+    S.hist.indice = ind;
+    return ind;
+  }
+
+  async function guardarCierre() {
+    const E = S.est; if (!E) return;
+    const dir = await dirCierres(true).catch(() => null);
+    if (!dir) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); S.cfgSec = 'carpetas'; irA('config'); return; }
+    const d = C.deteccion(E, cfg), avisos = [];
+    if (E.corteMin < 13 * 60) avisos.push('Los crudos son de las ' + C.hora(E.corteMin) + ': ¿seguro que ya cerró la operación?');
+    if (!E.hayPM) avisos.push('No cargaste el crudo de mañana: las cargas de la tarde no quedarán en el cierre.');
+    if (d.sinVerifLineas) avisos.push(d.sinVerifLineas + ' líneas sin verificar (rutas ' + d.sinVerifRutas.join(', ') + ').');
+    if (avisos.length && !confirm('Antes de guardar el cierre del ' + fechaTxt(E.corteDia) + ':\n\n• ' + avisos.join('\n• ') + '\n\n¿Guardar de todos modos?')) return;
+    const nombre = E.corteDia + '.json';
+    if (await K.existe(dir, nombre) && !confirm('Ya hay un cierre del ' + fechaTxt(E.corteDia) + '. ¿Reemplazarlo con estos crudos?')) return;
+    const foto = C.fotoCierre(E, S.archivos);
+    await K.escribir(dir, nombre, JSON.stringify(foto));
+    const ind = await leerIndice(dir);
+    ind.dias[foto.dia] = C.indiceDia(foto);
+    await K.escribir(dir, '_indice.json', JSON.stringify(ind));
+    S.hist.indice = ind; S.cierres.lista = null; delete S.cierres.cache[foto.dia];
+    if (cfg.carpetas.copiarCrudos) {
+      try {
+        const bk = await K.obtener('backup');
+        if (bk) { const cd = await K.subcarpeta(bk, 'Crudos/' + E.corteDia); for (const a of S.archivos) if (a.file) await K.escribir(cd, a.nombre, a.file); }
+      } catch (_) { /* el respaldo de crudos es opcional */ }
+    }
+    toast('Cierre del ' + fechaTxt(E.corteDia) + ' guardado en Hx\\Cierres\\' + nombre, 'ok');
   }
 
   /* Resumen del día para la tarjeta del Centro de Control ({ v, app, actualizado, datos }).
@@ -73,6 +162,7 @@
   }
   function reiniciar() {
     S.archivos = []; S.est = null; S.canvas = null; S.turno = 'AM';
+    guardarSesion();
     pintar(); toast('Listo para cargar nuevos archivos.');
   }
 
@@ -144,6 +234,14 @@
             <button type="button" class="drop" data-act="abrir" id="dropZone">Arrastra otro crudo aquí o haz clic para buscarlo</button>
           </div>
           <div class="card pad stack">
+            <h2>Tipo de carga</h2>
+            <div class="seg full" role="group" aria-label="Tipo de carga">
+              <button type="button" data-act="modo" data-v="whatsapp" class="${S.modo === 'whatsapp' ? 'on' : ''}">Corte para WhatsApp</button>
+              <button type="button" data-act="modo" data-v="cierre" class="${S.modo === 'cierre' ? 'on' : ''}">Cierre del día</button>
+            </div>
+            <p class="dim" style="margin:0;font-size:12px;line-height:1.5">${S.modo === 'whatsapp' ? 'Solo para armar y mandar la imagen. No se guarda nada.' : 'Se guarda como el registro del día en Hx\\Cierres y alimenta Cadenas, Cambios, Verificación e Historial.'}</p>
+          </div>
+          <div class="card pad stack">
             <h2>Clientes incluidos</h2>
             <div class="seg full" role="group" aria-label="Clientes incluidos">
               <button type="button" data-act="solo" data-v="0" class="${S.solo ? '' : 'on'}">Todos los de la ruta</button>
@@ -163,9 +261,9 @@
           <div class="bar" style="margin:0">
             <div class="seg" role="tablist" aria-label="Turno">${tabs.map(([t, l]) => `<button type="button" role="tab" data-act="turno" data-v="${t}" class="${S.turno === t ? 'on' : ''}">${l}</button>`).join('')}</div>
             <div class="right">
-              <button type="button" class="btn pri" data-act="copiar">${ico.copy} Copiar imagen para WhatsApp</button>
+              ${S.modo === 'cierre' ? `<button type="button" class="btn pri" data-act="cierre">${ico.save} Guardar cierre del ${esc(fechaTxt(E.corteDia))}</button>
+              <button type="button" class="btn" data-act="copiar">${ico.copy} Copiar imagen</button>` : `<button type="button" class="btn pri" data-act="copiar">${ico.copy} Copiar imagen para WhatsApp</button>`}
               <button type="button" class="btn" data-act="descargar">${ico.down} Descargar imagen</button>
-              <button type="button" class="btn" data-act="historial">${ico.save} Guardar en historial</button>
             </div>
           </div>
           <div class="card pad stack">
@@ -188,38 +286,33 @@
     S.res = res;
   }
 
-  async function guardarHistorial() {
-    const E = S.est; if (!E) return;
-    let hx;
-    try { hx = await K.obtener('hx'); } catch (e) { hx = null; }
-    if (!hx) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); irA('config'); S.cfgSec = 'carpetas'; vConfig(); return; }
-    const d = C.deteccion(E, cfg);
-    if (d.sinVerifLineas && !confirm('Hay ' + d.sinVerifLineas + ' líneas AM sin verificar (rutas ' + d.sinVerifRutas.join(', ') + ').\n¿Guardar de todos modos?')) return;
-    const dir = await K.subcarpeta(hx, 'Historial');
-    const hechos = [];
-    for (const t of ['AM', 'PM']) {
-      if ((t === 'AM' && !E.hayAM) || (t === 'PM' && !E.hayPM)) continue;
-      const foto = C.fotoHistorial(E, cfg, t, S.archivos);
-      const nombre = foto.fecha + '_' + t + '.json';
-      if (await K.existe(dir, nombre) && !confirm('Ya existe ' + nombre + ' en el historial. ¿Reemplazarlo con este corte?')) continue;
-      await K.escribir(dir, nombre, JSON.stringify(foto));
-      hechos.push(nombre);
-    }
-    if (cfg.carpetas.copiarCrudos) {
-      try {
-        const bk = await K.obtener('backup');
-        if (bk) {
-          const cd = await K.subcarpeta(bk, 'Crudos/' + E.corteDia);
-          for (const a of S.archivos) if (a.file) await K.escribir(cd, a.nombre, a.file);
-        }
-      } catch (_) { /* el respaldo de crudos es opcional */ }
-    }
-    S.hist.fotos = null;
-    toast(hechos.length ? 'Guardado en historial: ' + hechos.join(', ') : 'No se guardó nada.', hechos.length ? 'ok' : '');
-  }
-
   /* ================= CADENAS ================= */
-  const sinDatos = (txt) => `<div class="card empty"><b>Carga los crudos en Resumen</b>${txt || ''}</div>`;
+  /** Barra para elegir de dónde salen los datos: los crudos cargados o un cierre guardado. */
+  function barraFuente() {
+    const L = S.cierres.lista, vivo = S.fuente === 'vivo';
+    const idx = L && !vivo ? L.indexOf(S.fuente) : -1;
+    const D = datos();
+    let detalle = '';
+    if (vivo && S.est) detalle = `Crudos cargados · corte ${esc(fechaTxt(S.est.corteDia))} ${C.hora(S.est.corteMin)}`;
+    else if (vivo) detalle = 'No hay crudos cargados';
+    else if (D) detalle = `Cierre guardado · corte ${C.hora(D.corteMin)}${D.guardado ? ' · guardado ' + new Date(D.guardado).toLocaleString('es-GT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}`;
+    return `<div class="card fuente">
+      <span class="lbl">Datos</span>
+      <div class="seg" role="group" aria-label="Origen de los datos">
+        <button type="button" data-act="fuenteVivo" class="${vivo ? 'on' : ''}">Crudos cargados</button>
+        <button type="button" data-act="fuenteCierres" class="${vivo ? '' : 'on'}">Cierres guardados</button>
+      </div>
+      ${!vivo && L ? `<div class="nav-dia">
+        <button type="button" class="btn sm icon" data-act="diaMover" data-d="-1" ${idx <= 0 ? 'disabled' : ''} aria-label="Día anterior">${ico.izq}</button>
+        <select data-fuente aria-label="Día">${L.slice().reverse().map((d) => `<option value="${d}" ${d === S.fuente ? 'selected' : ''}>${esc(C.fechaCorta(d))} ${d.slice(0, 4)}</option>`).join('')}</select>
+        <button type="button" class="btn sm icon" data-act="diaMover" data-d="1" ${idx < 0 || idx >= L.length - 1 ? 'disabled' : ''} aria-label="Día siguiente">${ico.der}</button>
+      </div>` : ''}
+      <span class="det-f">${detalle}</span>
+    </div>`;
+  }
+  const sinDatos = () => S.fuente === 'vivo'
+    ? `<div class="card empty"><b>No hay crudos cargados</b>Cárgalos en Resumen, o abre un cierre guardado con “Cierres guardados”.</div>`
+    : `<div class="card empty"><b>No se pudo abrir el cierre</b>Revisa el acceso a la carpeta Hx.</div>`;
   function matrizHTML(m, primera, extra) {
     if (!m.filas.length) return '<div class="empty">No hay líneas con estos filtros.</div>';
     const cab = `<tr><th>${primera}</th>${extra ? '<th>CADENA</th>' : ''}${m.cols.map((c) => `<th class="n">${esc(c)}</th>`).join('')}<th class="n tc">TOTAL</th></tr>`;
@@ -230,13 +323,14 @@
   }
   function vCadenas() {
     const v = $('#v-cadenas');
-    if (!S.est) { v.innerHTML = sinDatos(); return; }
+    const D = datos();
+    if (!D) { v.innerHTML = barraFuente() + sinDatos(); return; }
     const f = S.cad;
-    const m = C.matrizCadenas(S.est, cfg, f);
-    const kp = C.matrizCadenas(S.est, cfg, { ...f, vista: 'cadena', otros: false });
+    const m = C.matrizCadenas(D, cfg, f);
+    const kp = C.matrizCadenas(D, cfg, { ...f, vista: 'cadena', otros: false });
     const opCad = ['*'].concat(cfg.cadenas.map((c) => c.nombre), f.otros ? ['Otros clientes'] : []);
     const cargaTxt = { Todo: 'AM + PM', AM: 'Solo AM', PM: 'Solo PM' }[f.carga];
-    v.innerHTML = `
+    v.innerHTML = barraFuente() + `
       <div class="bar">
         <div class="seg" role="tablist" aria-label="Vista">
           <button type="button" data-act="vista" data-v="cadena" class="${f.vista === 'cadena' ? 'on' : ''}">Cadena × Clave</button>
@@ -251,7 +345,7 @@
       <div class="kpis">${kp.filas.map((r) => `<div class="kpi"><div class="l">${esc(r.nombre)}</div><div class="v">${n0(r.total)}</div><div class="s">${r.tiendas} tiendas</div></div>`).join('')}</div>
       <div class="card">
         <div class="hd"><h3>${f.vista === 'cadena' ? 'Unidades por cadena y clave' : (f.cadena === '*' ? 'Todas las tiendas' : esc(f.cadena)) + ' — unidades por tienda y clave'}</h3>
-          <span class="note">${cargaTxt} · ${f.tipo === 'Normal' ? 'venta normal' : f.tipo.toLowerCase()} · corte ${esc(fechaTxt(S.est.corteDia))} ${C.hora(S.est.corteMin)}</span></div>
+          <span class="note">${cargaTxt} · ${f.tipo === 'Normal' ? 'venta normal' : f.tipo.toLowerCase()} · corte ${esc(fechaTxt(D.corteDia))} ${C.hora(D.corteMin)}</span></div>
         ${matrizHTML(m, f.vista === 'cadena' ? 'CADENA' : 'TIENDA', f.vista === 'tienda' && f.cadena === '*')}
       </div>`;
     S.matriz = m;
@@ -263,14 +357,15 @@
   /* ================= CAMBIOS ================= */
   function vCambios() {
     const v = $('#v-cambios');
-    if (!S.est) { v.innerHTML = sinDatos(); return; }
-    const r = C.cambios(S.est, cfg, S.camb.carga);
+    const D = datos();
+    if (!D) { v.innerHTML = barraFuente() + sinDatos(); return; }
+    const r = C.cambios(D, cfg, S.camb.carga);
     const maxU = Math.max(1, ...r.porClave.map((x) => x.u));
     const w = (p) => p != null && p >= 2.5 ? 'color:var(--warn)' : 'color:var(--tx2)';
-    v.innerHTML = `
+    v.innerHTML = barraFuente() + `
       <div class="bar">
         <h1 class="t">Cambios despachados</h1>
-        <span class="dim" style="font-size:13px;align-self:center">corte ${esc(fechaTxt(S.est.corteDia))} ${C.hora(S.est.corteMin)}</span>
+        <span class="dim" style="font-size:13px;align-self:center">corte ${esc(fechaTxt(D.corteDia))} ${C.hora(D.corteMin)}</span>
         <div class="seg" role="tablist" aria-label="Carga">${[['Todo', 'AM + PM'], ['AM', 'Solo AM'], ['PM', 'Solo PM']].map(([k, l]) => `<button type="button" data-act="cCarga" data-v="${k}" class="${S.camb.carga === k ? 'on' : ''}">${l}</button>`).join('')}</div>
         <div class="right"><button type="button" class="btn" data-act="expCamb">${ico.xls} Exportar a Excel</button></div>
       </div>
@@ -306,10 +401,14 @@
   /* ================= VERIFICACIÓN ================= */
   function vVerif() {
     const v = $('#v-verif');
-    if (!S.est) { v.innerHTML = sinDatos(); return; }
-    const hoy = S.est.corteDia, ayer = C.sumarDias(hoy, -1);
-    const dia = S.verJ === 'hoy' ? hoy : ayer;
-    const r = C.verificacion(S.est, cfg, dia);
+    const D = datos();
+    if (!D) { v.innerHTML = barraFuente() + sinDatos(); return; }
+    const hoy = D.corteDia, ayer = C.sumarDias(hoy, -1);
+    const hayAyer = D.lineas.some((l) => l.clase === 'AYER' && l.verif);
+    if (S.verJ === 'ayer' && !hayAyer) S.verJ = 'dia';
+    const J = { dia: [hoy, null], AM: [hoy, 'AM'], PM: [hoy, 'PM'], ayer: [ayer, 'AYER'] }[S.verJ] || [hoy, null];
+    const dia = J[0];
+    const r = C.verificacion(D, cfg, J[0], J[1]);
     S.verifR = r;
     let tl = '';
     if (r.filas.length) {
@@ -323,16 +422,18 @@
         </div>
         <p class="dim" style="margin:4px 0 0;font-size:12px;line-height:1.5">El sistema guarda una hora por vale, no por línea: las líneas por hora son un promedio de la ventana de trabajo.</p></div>`;
     }
-    v.innerHTML = `
+    v.innerHTML = barraFuente() + `
       <div class="bar">
         <h1 class="t">Carga de verificación</h1>
         <div class="seg" role="tablist" aria-label="Jornada">
-          <button type="button" data-act="verJ" data-v="hoy" class="${S.verJ === 'hoy' ? 'on' : ''}">Mañana ${esc(fechaTxt(hoy))} · carga AM</button>
-          <button type="button" data-act="verJ" data-v="ayer" class="${S.verJ === 'ayer' ? 'on' : ''}">Tarde ${esc(fechaTxt(ayer))} · carga PM</button>
+          <button type="button" data-act="verJ" data-v="dia" class="${S.verJ === 'dia' ? 'on' : ''}">Todo el ${esc(fechaTxt(hoy))}</button>
+          <button type="button" data-act="verJ" data-v="AM" class="${S.verJ === 'AM' ? 'on' : ''}">Mañana · carga AM</button>
+          <button type="button" data-act="verJ" data-v="PM" class="${S.verJ === 'PM' ? 'on' : ''}">Tarde · carga PM</button>
+          ${hayAyer ? `<button type="button" data-act="verJ" data-v="ayer" class="${S.verJ === 'ayer' ? 'on' : ''}">Tarde del ${esc(fechaTxt(ayer))}</button>` : ''}
         </div>
         <div class="right"><button type="button" class="btn" data-act="expVer">${ico.xls} Exportar a Excel</button></div>
       </div>
-      ${!r.filas.length ? '<div class="card empty"><b>Sin verificaciones en esta jornada</b>Los crudos cargados no tienen líneas verificadas ese día.</div>' : `
+      ${!r.filas.length ? '<div class="card empty"><b>Sin verificaciones en esta jornada</b>No hay líneas verificadas en esta jornada.</div>' : `
       <div class="card" style="margin-bottom:16px"><div class="tw"><table class="t"><thead><tr><th>VERIFICADORA</th><th class="n">VALES</th><th class="n">LÍNEAS</th><th class="n">UNIDADES</th><th class="n">RUTAS</th><th>VENTANA</th><th class="n">LÍNEAS / HORA</th></tr></thead><tbody>
         ${r.filas.map((f) => `<tr><td><b style="font-weight:600">${esc(f.nombre)}</b><div class="mono dim" style="font-size:11px">usuario ${esc(f.codigo)}</div></td><td class="n">${f.vales}</td><td class="n">${n0(f.lineas)}</td><td class="n">${n0(f.u)}</td><td class="n dim">${f.rutas}</td><td class="mono dim">${C.hora(f.ini)} – ${C.hora(f.fin)}</td><td class="n" style="color:var(--g)">${f.lph ?? '—'}</td></tr>`).join('')}
         <tr class="tot"><td>Total</td><td class="n">${r.tot.vales}</td><td class="n">${n0(r.tot.lineas)}</td><td class="n">${n0(r.tot.u)}</td><td></td><td class="mono">${C.hora(r.ini)} – ${C.hora(r.fin)}</td><td></td></tr>
@@ -341,18 +442,14 @@
 
   /* ================= HISTORIAL ================= */
   async function leerHistorial(pedir) {
-    const hx = await K.obtener('hx', pedir);
-    if (!hx) return false;
-    const dir = await K.subcarpeta(hx, 'Historial');
-    const nombres = (await K.listar(dir, '.json')).filter((n) => /^\d{4}-\d{2}-\d{2}_(AM|PM)\.json$/.test(n));
-    const fotos = [];
-    for (const n of nombres) { try { fotos.push(await K.leerJSON(dir, n)); } catch (_) {} }
-    S.hist.fotos = fotos.sort((a, b) => (a.fecha + a.turno).localeCompare(b.fecha + b.turno));
+    const dir = await dirCierres(pedir);
+    if (!dir) return false;
+    S.hist.indice = await leerIndice(dir);
     return true;
   }
   function graficaSVG(pts) {
     if (pts.length < 2) return `<div class="empty" style="border:1px dashed var(--line2);border-radius:10px"><b>Se dibuja con al menos 2 cortes</b>Hay ${pts.length} con estos filtros.</div>`;
-    const W = 900, H = 240, P = { l: 56, r: 16, t: 14, b: 34 };
+    const W = 900, H = 240, P = { l: 56, r: 44, t: 14, b: 34 };
     const max = Math.max(...pts.map((p) => p.u)) * 1.1 || 1;
     const x = (i) => P.l + i * (W - P.l - P.r) / (pts.length - 1);
     const y = (u) => P.t + (H - P.t - P.b) * (1 - u / max);
@@ -368,60 +465,63 @@
     const v = $('#v-hist');
     const st = await K.estado('hx');
     if (st.estado === 'sin') {
-      v.innerHTML = `<div class="card empty"><b>Elige la carpeta Hx</b>El historial se guarda en OneDrive: ${esc(cfg.carpetas.hx)}<br><br><button type="button" class="btn pri" data-act="irCarpetas">Ir a Configuración › Carpetas</button></div>`;
+      v.innerHTML = `<div class="card empty"><b>Elige la carpeta Hx</b>Los cierres del día se guardan en OneDrive: ${esc(cfg.carpetas.hx)}\\Cierres<br><br><button type="button" class="btn pri" data-act="irCarpetas">Ir a Configuración › Carpetas</button></div>`;
       return;
     }
-    if (!S.hist.fotos) {
+    if (!S.hist.indice) {
       let ok = false;
       if (st.estado === 'ok') { try { ok = await leerHistorial(false); } catch (_) {} }
       if (!ok) { v.innerHTML = `<div class="card empty"><b>Dar acceso a la carpeta Hx</b>El navegador pide confirmar el permiso cada vez que se abre la app.<br><br><button type="button" class="btn pri" data-act="leerHist">Abrir historial</button></div>`; return; }
     }
-    const H = S.hist, F = H.fotos;
+    const H = S.hist, dias = Object.values(H.indice.dias || {}).sort((a, b) => a.dia.localeCompare(b.dia));
     const rutasImg = new Set(cfg.rutas.filter((r) => r.enImagen).map((r) => r.ruta));
     const fRutas = H.soloImg ? rutasImg : null;
-    const rutas = [...new Set(F.flatMap((x) => Object.keys(x.rutas || {})))].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
-    const nombresR = Object.assign({}, ...F.map((x) => x.rutas || {}));
-    const claves = [...new Set(F.flatMap((x) => x.filas.map((r) => r[4])))];
-    const pts = C.tendencia(F, { turno: H.turno, ruta: H.ruta, clave: H.clave, rutas: fRutas });
-    if (H.dow == null) { const ult = F[F.length - 1]; H.dow = ult ? (C.partes(ult.fecha).dow + 1) % 7 : 1; }
-    const pr = C.pronostico(F, cfg, { turno: H.fTurno, dow: +H.dow, n: 4, rutas: fRutas });
+    const nombresR = Object.assign({}, ...dias.map((x) => x.rutas || {}));
+    const rutas = Object.keys(nombresR).sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+    const claves = [...new Set(dias.flatMap((x) => x.agg.map((r) => r[2])))];
+    const pts = C.tendencia(dias, { turno: H.turno, ruta: H.ruta, clave: H.clave, rutas: fRutas });
+    if (H.dow == null) { const ult = dias[dias.length - 1]; H.dow = ult ? (C.partes(ult.dia).dow + 1) % 7 : 1; }
+    const pr = C.pronostico(dias, cfg, { turno: H.fTurno, dow: +H.dow, n: 4, rutas: fRutas });
     const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const sel = (f, ops, val) => `<select data-h="${f}">${ops.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     v.innerHTML = `
       <div class="row">
         <aside class="side">
           <div class="card pad stack">
-            <h2>Cortes guardados (${F.length})</h2>
-            <div class="stack" style="max-height:520px;overflow:auto">
-            ${F.length ? F.slice().reverse().map((x) => { const u = x.filas.reduce((s, r) => s + r[7], 0); return `<div class="file" style="align-items:center"><span class="mono" style="font-size:12px;padding:2px 8px;border-radius:6px;background:var(--bg);color:var(--c)">${x.turno}</span><div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(C.fechaCorta(x.fecha))} ${x.fecha.slice(0, 4)}</div><div class="dim" style="font-size:12px">Corte ${esc(x.corte && x.corte.hora)} · ${Object.keys(x.rutas || {}).length} rutas · ${n0(u)} u.</div></div></div>`; }).join('') : '<div class="dim" style="font-size:13px">Todavía no hay cortes. Usa “Guardar en historial” en Resumen.</div>'}
+            <h2>Cierres guardados (${dias.length})</h2>
+            <div class="stack" style="max-height:560px;overflow:auto">
+            ${dias.length ? dias.slice().reverse().map((x) => `<div class="file" style="align-items:center">
+                <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${esc(C.fechaCorta(x.dia))} ${x.dia.slice(0, 4)}</div>
+                <div class="dim" style="font-size:12px">Corte ${esc(x.corteHora || '')} · AM ${n0(x.am)} · PM ${n0(x.pm)} · cambios ${n0(x.cambios)}</div></div>
+                <button type="button" class="btn sm" data-act="verCierre" data-v="${x.dia}">Ver datos</button></div>`).join('') : '<div class="dim" style="font-size:13px;line-height:1.5">Todavía no hay cierres. Al terminar la operación, carga los crudos en Resumen, elige “Cierre del día” y guárdalo.</div>'}
             </div>
-            <button type="button" class="btn sm" data-act="leerHist">Volver a leer la carpeta</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn sm" data-act="leerHist">Volver a leer</button><button type="button" class="btn sm ghost" data-act="reindex" title="Vuelve a calcular el índice leyendo todos los cierres">Reconstruir índice</button></div>
           </div>
         </aside>
         <div class="mainc">
           <div class="card pad stack">
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
               <h3 style="margin:0;font-size:15px;align-self:center">Tendencia diaria</h3>
-              <label class="fld" style="margin-left:auto">Turno${sel('turno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.turno)}</label>
+              <label class="fld" style="margin-left:auto">Carga${sel('turno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.turno)}</label>
               <label class="fld">Ruta${sel('ruta', [['*', 'Todas']].concat(rutas.map((r) => [r, r + ' ' + (nombresR[r] || '')])), H.ruta)}</label>
               <label class="fld">Clave${sel('clave', [['*', 'Todas']].concat(claves.map((c) => [c, c])), H.clave)}</label>
               <label class="chk" style="height:38px"><input type="checkbox" data-h="soloImg" ${H.soloImg ? 'checked' : ''}> Solo rutas de la imagen</label>
             </div>
             ${graficaSVG(pts)}
-            <p class="dim" style="margin:0;font-size:12px">Unidades de venta normal (sin cambios). Cada corte es una foto a la hora en que se generó el crudo.</p>
+            <p class="dim" style="margin:0;font-size:12px">Unidades de venta normal por día de operación (sin cambios), según los cierres guardados.</p>
           </div>
           <div class="card">
             <div class="hd" style="align-items:flex-end">
               <h3>Pronóstico para producción</h3>
-              <span class="note">Promedio de ${pr.fechas.length || 0} corte(s) de ${DIAS[H.dow].toLowerCase()} · máx. 4</span>
+              <span class="note">Promedio de ${pr.fechas.length || 0} cierre(s) de ${DIAS[H.dow].toLowerCase()} · máx. 4</span>
               <label class="fld" style="margin-left:auto">Día${sel('dow', DIAS.map((d, i) => [i, d]), H.dow)}</label>
-              <label class="fld">Turno${sel('fTurno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.fTurno)}</label>
+              <label class="fld">Carga${sel('fTurno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.fTurno)}</label>
               <button type="button" class="btn sm" data-act="expPron" style="align-self:flex-end">${ico.xls} Excel</button>
             </div>
             ${pr.filas.length ? `<div class="tw"><table class="t"><thead><tr><th>CLAVE</th><th class="n">PROMEDIO</th><th class="n">ÚLTIMO</th><th class="n">TENDENCIA</th><th class="n">PARRILLAS</th>${pr.fechas.map((d) => `<th class="n">${esc(C.fechaCorta(d))}</th>`).join('')}</tr></thead><tbody>
               ${pr.filas.map((x) => `<tr><td class="mono" style="color:var(--c)">${esc(x.codigo)}</td><td class="n" style="color:var(--g)">${n0(x.prom)}</td><td class="n">${n0(x.ult)}</td><td class="n" style="color:${x.tend == null ? 'var(--tx3)' : x.tend >= 0 ? 'var(--g)' : 'var(--warn)'}">${x.tend == null ? '—' : (x.tend >= 0 ? '+' : '') + x.tend.toFixed(0) + '%'}</td><td class="n">${x.parrillas ?? '—'}</td>${x.serie.map((s) => `<td class="n dim">${n0(s)}</td>`).join('')}</tr>`).join('')}
               <tr class="tot"><td>Total</td><td class="n">${n0(pr.filas.reduce((s, x) => s + x.prom, 0))}</td><td class="n">${n0(pr.filas.reduce((s, x) => s + x.ult, 0))}</td><td></td><td class="n">${n0(pr.filas.reduce((s, x) => s + (x.parrillas || 0), 0))}</td>${pr.fechas.map((_, j) => `<td class="n">${n0(pr.filas.reduce((s, x) => s + x.serie[j], 0))}</td>`).join('')}</tr>
-            </tbody></table></div>` : `<div class="empty">Todavía no hay cortes de ${DIAS[H.dow].toLowerCase()} para este turno.</div>`}
+            </tbody></table></div>` : `<div class="empty">Todavía no hay cierres de ${DIAS[H.dow].toLowerCase()} para esta carga.</div>`}
           </div>
         </div>
       </div>`;
@@ -530,10 +630,17 @@
   }
 
   /* ---------- navegación y eventos ---------- */
-  function irA(t) {
+  async function irA(t) {
     S.tab = t;
     $$('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
     $$('.view').forEach((v) => v.classList.toggle('on', v.id === 'v-' + t));
+    // Sin crudos cargados, los módulos abren solos el último cierre guardado (si ya hay permiso a Hx).
+    if (['cadenas', 'cambios', 'verif'].includes(t) && S.fuente === 'vivo' && !S.est) {
+      try {
+        const L = await listarCierres(false);
+        if (L && L.length) await abrirCierre(L[L.length - 1], false);
+      } catch (_) { /* sin permiso: se queda la barra para elegir */ }
+    }
     pintar();
   }
   function pintar() {
@@ -554,7 +661,8 @@
         case 'descargar':
           if (!S.canvas) return toast('No hay imagen.', 'bad');
           await IMG.descargar(S.canvas, 'Resumen ' + S.turno + ' ' + S.res.fecha + '.jpg'); break;
-        case 'historial': await guardarHistorial(); break;
+        case 'cierre': await guardarCierre(); break;
+        case 'modo': S.modo = b.dataset.v; vResumen(); guardarSesion(); break;
         case 'agregarNuevas': {
           const d = C.deteccion(S.est, cfg);
           d.nuevas.forEach((r) => cfg.rutas.push({ ruta: r.ruta, nombreSistema: r.nombre, nombreImagen: '', turno: 'auto', enImagen: false }));
@@ -564,13 +672,13 @@
         case 'expCad': {
           const f = S.cad, m = S.matriz;
           const base = f.vista === 'cadena' ? 'Cadenas x Clave' : 'Tiendas x Clave ' + (f.cadena === '*' ? 'todas' : f.cadena);
-          await exportar('Cadenas', base + ' ' + S.est.corteDia + ' ' + f.carga + '.xlsx', [{ nombre: f.vista === 'cadena' ? 'Cadena x Clave' : 'Tienda x Clave', aoa: aoaMatriz(m, f.vista === 'cadena' ? 'Cadena' : 'Tienda') }]);
+          await exportar('Cadenas', base + ' ' + datos().corteDia + ' ' + f.carga + '.xlsx', [{ nombre: f.vista === 'cadena' ? 'Cadena x Clave' : 'Tienda x Clave', aoa: aoaMatriz(m, f.vista === 'cadena' ? 'Cadena' : 'Tienda') }]);
           break;
         }
         case 'cCarga': S.camb.carga = b.dataset.v; vCambios(); break;
         case 'expCamb': {
           const r = S.cambiosR;
-          await exportar('Cambios', 'Cambios ' + S.est.corteDia + ' ' + S.camb.carga + '.xlsx', [
+          await exportar('Cambios', 'Cambios ' + datos().corteDia + ' ' + S.camb.carga + '.xlsx', [
             { nombre: 'Por clave', aoa: [['Clave', 'Cambios', 'Normal', '%']].concat(r.porClave.map((x) => [x.codigo, x.u, x.normal, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', r.total, r.porClave.reduce((s, x) => s + x.normal, 0), '']]) },
             { nombre: 'Por ruta', aoa: [['Ruta', 'Nombre', 'Cambios', 'Clientes', '% de su venta']].concat(r.porRuta.map((x) => [x.ruta, x.nombre, x.u, x.clientes, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', '', r.total, r.clientes, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
             { nombre: 'Por cliente', aoa: [['Cliente', 'Cadena', 'Ruta', 'Nombre ruta', 'Cambios']].concat(r.porCliente.map((x) => [x.cliente, x.cadena, x.ruta, x.rutaNombre, x.u])).concat([['Total', '', '', '', r.total]]) }
@@ -578,6 +686,21 @@
           break;
         }
         case 'verJ': S.verJ = b.dataset.v; vVerif(); break;
+        case 'fuenteVivo': S.fuente = 'vivo'; pintar(); break;
+        case 'fuenteCierres': {
+          const L = await listarCierres(true);
+          if (!L) { toast('Elige la carpeta Hx en Configuración › Carpetas para ver los cierres.', 'bad'); return; }
+          if (!L.length) { toast('Todavía no hay cierres guardados.', 'bad'); return; }
+          await abrirCierre(S.fuente !== 'vivo' && L.includes(S.fuente) ? S.fuente : L[L.length - 1]);
+          pintar(); break;
+        }
+        case 'diaMover': {
+          const L = S.cierres.lista || [], j = L.indexOf(S.fuente) + (+b.dataset.d);
+          if (j < 0 || j >= L.length) return;
+          await abrirCierre(L[j]); pintar(); break;
+        }
+        case 'verCierre': await listarCierres(true); await abrirCierre(b.dataset.v); irA('cadenas'); break;
+        case 'reindex': await reconstruirIndice(); toast('Índice del historial reconstruido.', 'ok'); vHist(); break;
         case 'expVer': {
           const r = S.verifR;
           await exportar('Verificacion', 'Verificacion ' + r.dia + '.xlsx', [{ nombre: 'Verificadoras', aoa: [['Código', 'Nombre', 'Vales', 'Líneas', 'Unidades', 'Rutas', 'Inicio', 'Fin', 'Líneas por hora']]
@@ -585,7 +708,7 @@
           break;
         }
         case 'irCarpetas': S.cfgSec = 'carpetas'; irA('config'); break;
-        case 'leerHist': S.hist.fotos = null; if (await leerHistorial(true)) vHist(); else toast('No se dio permiso a la carpeta Hx.', 'bad'); break;
+        case 'leerHist': S.hist.indice = null; if (await leerHistorial(true)) vHist(); else toast('No se dio permiso a la carpeta Hx.', 'bad'); break;
         case 'expPron': {
           const pr = S.pron; if (!pr || !pr.filas.length) return toast('No hay pronóstico para exportar.', 'bad');
           await exportar('Pronostico', 'Pronostico ' + ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][S.hist.dow] + ' ' + S.hist.fTurno + ' ' + hoyTxt() + '.xlsx', [{ nombre: 'Pronóstico', aoa: [['Clave', 'Promedio', 'Último', 'Tendencia %', 'Parrillas'].concat(pr.fechas)]
@@ -612,7 +735,7 @@
             .forEach((c) => cfg.verificadoras.push({ codigo: c, nombre: 'Usuario ' + c, activa: true }));
           guardarCfg(); vConfig(); break;
         }
-        case 'elegir': await K.elegir(b.dataset.k); S.hist.fotos = null; toast('Carpeta conectada.', 'ok'); vConfig(); break;
+        case 'elegir': await K.elegir(b.dataset.k); S.hist.indice = null; S.cierres = { lista: null, cache: {} }; toast('Carpeta conectada.', 'ok'); vConfig(); break;
         case 'permiso': await K.obtener(b.dataset.k, true); vConfig(); break;
         case 'copiarCrudos': cfg.carpetas.copiarCrudos = b.checked; guardarCfg(false); break;
         case 'respaldar': await respaldar(); break;
@@ -628,8 +751,12 @@
     }
   }
 
-  function onChange(e) {
+  async function onChange(e) {
     const t = e.target;
+    if (t.matches('[data-fuente]')) {
+      try { await abrirCierre(t.value); } catch (err) { toast(err.message, 'bad'); }
+      pintar(); return;
+    }
     if (t.matches('#v-cadenas [data-f]')) {
       const k = t.dataset.f; S.cad[k] = t.type === 'checkbox' ? t.checked : t.value;
       if (k === 'otros' && !t.checked && S.cad.cadena === 'Otros clientes') S.cad.cadena = '*';
@@ -676,6 +803,14 @@
   function iniciar() {
     $('#ver').textContent = VERSION;
     instalacion();
+    leerSesion().then((ses) => {
+      if (!ses || !ses.archivos || !ses.archivos.length || S.archivos.length) return;
+      S.archivos = ses.archivos; S.modo = ses.modo || 'whatsapp'; S.solo = !!ses.solo;
+      S.est = C.clasificar(S.archivos, cfg);
+      S.turno = S.est.hayAM ? 'AM' : 'PM';
+      pintar(); avisarCentro();
+      toast('Se recuperaron los crudos del ' + fechaTxt(S.est.corteDia) + ' ' + C.hora(S.est.corteMin) + '.');
+    });
     window.addEventListener('message', (e) => {
       if (e.data && e.data.tipo === 'cc:resumen' && ultimoInsight) { try { e.source.postMessage({ tipo: 'cc:insight', id: 'rutas', insight: ultimoInsight }, '*'); } catch (_) {} }
     });

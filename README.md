@@ -10,12 +10,15 @@ App web (HTML estático, sin compilación) que lee el crudo de Excel del sistema
 - **Cadenas**: Cadena × Clave y Tienda × Clave, con totales por fila y columna.
 - **Cambios**: por clave, ruta y cliente, con % sobre la venta normal.
 - **Verificación**: vales, líneas, unidades y ventana de trabajo por verificadora.
-- **Historial**: cortes guardados en OneDrive (`Hx\Historial`), tendencia diaria y pronóstico por clave.
+- **Corte para WhatsApp vs. cierre del día**: el corte de la mañana (10:00–10:30) solo sirve para la imagen; no se guarda. Al terminar la operación se cargan los crudos otra vez y se guarda el **cierre del día** (`Hx\Cierres\AAAA-MM-DD.json`), que es el registro oficial: AM del día + cargas de la tarde (crudo de mañana).
+- **Navegar entre días**: Cadenas, Cambios y Verificación tienen la barra “Datos” para elegir entre los crudos cargados o cualquier cierre guardado (flechas día anterior / siguiente).
+- **Historial**: lista de cierres, tendencia diaria y pronóstico por clave, leídos de `Hx\Cierres\_indice.json`.
+- **Sesión**: los últimos crudos cargados se recuperan al volver a abrir la app (hasta “Empezar de nuevo”).
 - **Configuración**: rutas, claves, cadenas, verificadoras y carpetas (Hx y Backup).
 
 ## Carpetas
 
-- `Hx`: `Historial\AAAA-MM-DD_AM.json`, `Cadenas\`, `Cambios\`, `Verificacion\`, `Pronostico\`.
+- `Hx`: `Cierres\AAAA-MM-DD.json` + `Cierres\_indice.json`, `Cadenas\`, `Cambios\`, `Verificacion\`, `Pronostico\`.
 - `Backup`: `Config\config_*.json` y `Crudos\AAAA-MM-DD\`.
 
 Usa la API de acceso a archivos (Chrome / Edge en PC). Dentro de un marco (Centro de Control embebido) el navegador no deja elegir carpetas: abrir en pestaña propia.
