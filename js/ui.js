@@ -1,13 +1,13 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.4';
+  const VERSION = 'V.5';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const n0 = (v) => Math.round(v || 0).toLocaleString('en-US');
-  const pct = (v) => v == null ? '—' : v.toFixed(1) + '%';
+  const pct = (v) => v == null ? '—' : v.toFixed(v < 1 ? 2 : 1) + '%';
   const ico = {
     copy: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>',
     down: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
@@ -381,7 +381,7 @@
           <div class="hd"><h3>Por clave</h3><span class="note">Barra = unidades de cambio · % sobre lo despachado normal de esa clave</span></div>
           <div class="tw"><table class="t"><thead><tr><th>CLAVE</th><th style="width:45%"></th><th class="n">CAMBIOS</th><th class="n">NORMAL</th><th class="n">%</th></tr></thead><tbody>
           ${r.porClave.map((x) => `<tr><td class="mono" style="color:var(--c)">${esc(x.codigo)}</td><td><div class="barra"><i style="width:${Math.round(x.u / maxU * 100)}%"></i></div></td><td class="n">${n0(x.u)}</td><td class="n dim">${n0(x.normal)}</td><td class="n" style="${w(x.pct)}">${pct(x.pct)}</td></tr>`).join('')}
-          <tr class="tot"><td>Total</td><td></td><td class="n">${n0(r.total)}</td><td class="n">${n0(r.porClave.reduce((s, x) => s + x.normal, 0))}</td><td class="n">${pct(r.total / Math.max(1, r.porClave.reduce((s, x) => s + x.normal, 0)) * 100)}</td></tr>
+          <tr class="tot"><td>Total</td><td></td><td class="n">${n0(r.total)}</td><td class="n">${n0(r.normal)}</td><td class="n">${pct(r.pct)}</td></tr>
           </tbody></table></div>
         </div>
         <div style="flex:1 1 440px;min-width:0;display:flex;flex-direction:column;gap:16px">
@@ -461,6 +461,64 @@
       ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.u)}" r="3.5" fill="#0A0E17" stroke="#00FF88" stroke-width="2"><title>${p.fecha}: ${n0(p.u)}</title></circle>${i % paso === 0 ? `<text x="${x(i)}" y="${H - 12}" fill="#64748B" font-size="11" text-anchor="middle">${esc(C.fechaCorta(p.fecha))}</text>` : ''}`).join('')}
     </svg>`;
   }
+  /* ---------- carga histórica ---------- */
+  async function cargarHistorico(file) {
+    toast('Leyendo ' + file.name + '…');
+    try {
+      const a = C.leerLibro(new Uint8Array(await file.arrayBuffer()), file.name, window.XLSX);
+      a.file = file;
+      const dias = C.dividirPorDia([a], cfg);
+      let existentes = [];
+      try { existentes = (await listarCierres(true)) || []; } catch (_) {}
+      const ex = new Set(existentes);
+      S.hist.pre = { archivo: a, dias: dias.map((d) => ({ ...d, existe: ex.has(d.dia), incluir: d.completo && !ex.has(d.dia) })) };
+      toast(file.name + ': ' + dias.length + ' días encontrados. Revisa la lista y guarda.', 'ok');
+    } catch (e) { toast(e.message, 'bad'); }
+    vHist();
+  }
+  function previaHistorica() {
+    const P = S.hist.pre; if (!P) return '';
+    const n = P.dias.filter((d) => d.incluir).length;
+    return `<div class="card">
+      <div class="hd"><h3>Carga histórica · ${esc(P.archivo.nombre)}</h3><span class="note">${n} de ${P.dias.length} días marcados</span>
+        <div style="margin-left:auto;display:flex;gap:8px"><button type="button" class="btn sm ghost" data-act="histCancelar">Cancelar</button>
+        <button type="button" class="btn sm pri" data-act="histGuardar" ${n ? '' : 'disabled'}>${ico.save} Guardar ${n} cierre${n === 1 ? '' : 's'}</button></div></div>
+      <div class="tw" style="max-height:460px;overflow:auto"><table class="t"><thead><tr><th></th><th>DÍA</th><th class="n">LÍNEAS AM</th><th class="n">UNID. AM</th><th class="n">LÍNEAS PM</th><th class="n">UNID. PM</th><th class="n">SIN VERIFICAR</th><th>NOTA</th></tr></thead><tbody>
+      ${P.dias.map((d, i) => `<tr><td><input type="checkbox" data-hpre="${i}" ${d.incluir ? 'checked' : ''} aria-label="Incluir ${esc(d.dia)}"></td>
+        <td><b style="font-weight:600">${esc(C.fechaCorta(d.dia))}</b> <span class="dim">${d.dia.slice(0, 4)}</span></td>
+        <td class="n">${n0(d.am.lineas)}</td><td class="n">${n0(d.am.u)}</td><td class="n">${n0(d.pm.lineas)}</td><td class="n">${n0(d.pm.u)}</td>
+        <td class="n ${d.sinVerif ? '' : 'dim'}">${n0(d.sinVerif)}</td>
+        <td style="white-space:normal;font-size:12px">${d.nota ? `<span style="color:var(--warn)">${esc(d.nota)}</span>` : ''}${d.existe ? `${d.nota ? ' · ' : ''}<span style="color:var(--c)">Ya hay cierre: se reemplaza si lo marcas</span>` : ''}</td></tr>`).join('')}
+      <tr class="tot"><td></td><td>Total marcado</td>${['am', 'pm'].map((k) => `<td class="n">${n0(P.dias.filter((d) => d.incluir).reduce((s, d) => s + d[k].lineas, 0))}</td><td class="n">${n0(P.dias.filter((d) => d.incluir).reduce((s, d) => s + d[k].u, 0))}</td>`).join('')}<td class="n">${n0(P.dias.filter((d) => d.incluir).reduce((s, d) => s + d.sinVerif, 0))}</td><td></td></tr>
+      </tbody></table></div>
+      <p class="dim" style="margin:0;padding:10px 18px;font-size:12px;line-height:1.5">Mañana = lo de la fecha del día; tarde = lo verificado ese día para el día siguiente (el sábado, para el lunes). Los días incompletos quedan sin marcar.</p>
+    </div>`;
+  }
+  async function guardarHistorico() {
+    const P = S.hist.pre; if (!P) return;
+    const sel = P.dias.filter((d) => d.incluir);
+    const dir = await dirCierres(true).catch(() => null);
+    if (!dir) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); return; }
+    const reemplaza = sel.filter((d) => d.existe).length;
+    if (!confirm('Se guardarán ' + sel.length + ' cierres en Hx\\Cierres' + (reemplaza ? ', reemplazando ' + reemplaza + ' que ya existen' : '') + '. ¿Continuar?')) return;
+    const ind = await leerIndice(dir);
+    let i = 0;
+    for (const d of sel) {
+      const foto = C.fotoCierre(d.est, [P.archivo]);
+      await K.escribir(dir, d.dia + '.json', JSON.stringify(foto));
+      ind.dias[d.dia] = C.indiceDia(foto);
+      delete S.cierres.cache[d.dia];
+      toast('Guardando cierres… ' + (++i) + ' de ' + sel.length);
+    }
+    await K.escribir(dir, '_indice.json', JSON.stringify(ind));
+    if (cfg.carpetas.copiarCrudos && P.archivo.file) {
+      try { const bk = await K.obtener('backup'); if (bk) { const cd = await K.subcarpeta(bk, 'Crudos/historico'); await K.escribir(cd, P.archivo.nombre, P.archivo.file); } } catch (_) {}
+    }
+    S.hist.indice = ind; S.cierres.lista = null; S.hist.pre = null;
+    toast(sel.length + ' cierres guardados en el historial.', 'ok');
+    vHist();
+  }
+
   async function vHist() {
     const v = $('#v-hist');
     const st = await K.estado('hx');
@@ -497,8 +555,13 @@
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn sm" data-act="leerHist">Volver a leer</button><button type="button" class="btn sm ghost" data-act="reindex" title="Vuelve a calcular el índice leyendo todos los cierres">Reconstruir índice</button></div>
           </div>
+          <div class="card pad stack">
+            <h2>Carga histórica</h2>
+            <p class="dim" style="margin:0;font-size:12px;line-height:1.5">Un crudo con varios días (por ejemplo del 2 al 25) se reparte en un cierre por día de operación. Antes de guardar ves la lista de días.</p>
+            <button type="button" class="btn" data-act="histCargar">${ico.down} Cargar crudo de varios días</button>
+          </div>
         </aside>
-        <div class="mainc">
+        <div class="mainc">${previaHistorica()}
           <div class="card pad stack">
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
               <h3 style="margin:0;font-size:15px;align-self:center">Tendencia diaria</h3>
@@ -679,7 +742,7 @@
         case 'expCamb': {
           const r = S.cambiosR;
           await exportar('Cambios', 'Cambios ' + datos().corteDia + ' ' + S.camb.carga + '.xlsx', [
-            { nombre: 'Por clave', aoa: [['Clave', 'Cambios', 'Normal', '%']].concat(r.porClave.map((x) => [x.codigo, x.u, x.normal, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', r.total, r.porClave.reduce((s, x) => s + x.normal, 0), '']]) },
+            { nombre: 'Por clave', aoa: [['Clave', 'Cambios', 'Normal', '%']].concat(r.porClave.map((x) => [x.codigo, x.u, x.normal, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', r.total, r.normal, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
             { nombre: 'Por ruta', aoa: [['Ruta', 'Nombre', 'Cambios', 'Clientes', '% de su venta']].concat(r.porRuta.map((x) => [x.ruta, x.nombre, x.u, x.clientes, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', '', r.total, r.clientes, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
             { nombre: 'Por cliente', aoa: [['Cliente', 'Cadena', 'Ruta', 'Nombre ruta', 'Cambios']].concat(r.porCliente.map((x) => [x.cliente, x.cadena, x.ruta, x.rutaNombre, x.u])).concat([['Total', '', '', '', r.total]]) }
           ]);
@@ -700,6 +763,9 @@
           await abrirCierre(L[j]); pintar(); break;
         }
         case 'verCierre': await listarCierres(true); await abrirCierre(b.dataset.v); irA('cadenas'); break;
+        case 'histCargar': $('#histInput').click(); break;
+        case 'histCancelar': S.hist.pre = null; vHist(); break;
+        case 'histGuardar': await guardarHistorico(); break;
         case 'reindex': await reconstruirIndice(); toast('Índice del historial reconstruido.', 'ok'); vHist(); break;
         case 'expVer': {
           const r = S.verifR;
@@ -762,6 +828,7 @@
       if (k === 'otros' && !t.checked && S.cad.cadena === 'Otros clientes') S.cad.cadena = '*';
       vCadenas(); return;
     }
+    if (t.matches('[data-hpre]')) { S.hist.pre.dias[+t.dataset.hpre].incluir = t.checked; vHist(); return; }
     if (t.matches('#v-hist [data-h]')) {
       const k = t.dataset.h; S.hist[k] = t.type === 'checkbox' ? t.checked : t.value; vHist(); return;
     }
@@ -819,6 +886,7 @@
     $('#app').addEventListener('click', onClick);
     $('#app').addEventListener('change', onChange);
     $('#fileInput').addEventListener('change', (e) => { cargarArchivos(e.target.files); e.target.value = ''; });
+    $('#histInput').addEventListener('change', (e) => { if (e.target.files[0]) cargarHistorico(e.target.files[0]); e.target.value = ''; });
     $('#cfgInput').addEventListener('change', (e) => { if (e.target.files[0]) importarCfg(e.target.files[0]); e.target.value = ''; });
     // Arrastrar y soltar en cualquier parte de la app
     let cnt = 0;

@@ -350,6 +350,38 @@
       agg: Object.entries(m).map(([k, u]) => k.split('|').concat(u)) };
   }
 
+  /* Carga histórica: un archivo con varios días se reparte por día de operación.
+     - Verificada antes de su fecha (carga de la tarde; el sábado carga para el lunes): PM del día en que se verificó.
+     - Las demás (verificadas el mismo día, después o sin verificar): AM del día de su fecha.
+     Un día queda incompleto si le falta la mañana (antes de la primera fecha del archivo)
+     o la tarde (el último día, si el archivo no trae fechas posteriores). */
+  function dividirPorDia(archivos, cfg) {
+    const todas = archivos.flatMap((a) => a.lineas);
+    const fechas = todas.map((l) => l.fecha).sort();
+    const minF = fechas[0], maxF = fechas[fechas.length - 1];
+    const dias = {};
+    for (const l of todas) {
+      const pm = l.verif && l.verif.d < l.fecha;
+      const dia = pm ? l.verif.d : l.fecha;
+      const x = { ...l, clase: pm ? 'PM' : 'AM', sinVerif: !l.verif, cad: cadenaDe(l.clienteNombre, cfg.cadenas) };
+      (dias[dia] = dias[dia] || []).push(x);
+    }
+    return Object.keys(dias).sort().map((dia) => {
+      const lineas = dias[dia];
+      let corteMin = 0;
+      lineas.forEach((l) => { if (l.verif && l.verif.d === dia) corteMin = Math.max(corteMin, l.verif.m); });
+      const pms = lineas.filter((l) => l.clase === 'PM'), ams = lineas.filter((l) => l.clase === 'AM');
+      const sum = (ls) => ls.reduce((s, l) => s + l.cantidad, 0);
+      const faltaAM = dia < minF, faltaPM = dia >= maxF && !fechas.some((f) => f > dia);
+      return {
+        dia, est: { lineas, corteDia: dia, corteMin, amFecha: dia, pmFecha: pms.length ? pms.map((l) => l.fecha).sort()[0] : null, hayAM: !!ams.length, hayPM: !!pms.length },
+        am: { lineas: ams.length, u: sum(ams) }, pm: { lineas: pms.length, u: sum(pms) },
+        sinVerif: lineas.filter((l) => l.sinVerif).length, completo: !faltaAM && !faltaPM,
+        nota: faltaAM ? 'Solo trae la carga de la tarde' : faltaPM ? 'Sin cargas de la tarde (falta el día siguiente)' : ''
+      };
+    });
+  }
+
   /** Unidades por día de operación para la tendencia. f: { turno: 'Ambos'|'AM'|'PM', ruta, clave, rutas: Set|null } */
   function tendencia(dias, f) {
     return dias.slice().sort((a, b) => a.dia.localeCompare(b.dia)).map((d) => {
@@ -381,5 +413,5 @@
   }
 
   root.Core = { norm, up, fechaDe, leerFilas, leerLibro, clasificar, cadenaDe, resumen, deteccion, matrizCadenas, cambios, verificacion,
-    fotoCierre, estDesdeCierre, indiceDia, tendencia, pronostico, sumarDias, tituloResumen, fechaCorta, hora, partes, MESES_L, DIAS_C };
+    fotoCierre, estDesdeCierre, indiceDia, dividirPorDia, tendencia, pronostico, sumarDias, tituloResumen, fechaCorta, hora, partes, MESES_L, DIAS_C };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -13,6 +13,7 @@ App web (HTML estático, sin compilación) que lee el crudo de Excel del sistema
 - **Corte para WhatsApp vs. cierre del día**: el corte de la mañana (10:00–10:30) solo sirve para la imagen; no se guarda. Al terminar la operación se cargan los crudos otra vez y se guarda el **cierre del día** (`Hx\Cierres\AAAA-MM-DD.json`), que es el registro oficial: AM del día + cargas de la tarde (crudo de mañana).
 - **Navegar entre días**: Cadenas, Cambios y Verificación tienen la barra “Datos” para elegir entre los crudos cargados o cualquier cierre guardado (flechas día anterior / siguiente).
 - **Historial**: lista de cierres, tendencia diaria y pronóstico por clave, leídos de `Hx\Cierres\_indice.json`.
+- **Carga histórica** (Historial): un crudo de varios días se reparte en un cierre por día de operación (lo verificado antes de su fecha es la carga PM del día en que se verificó; el sábado carga para el lunes). Vista previa por día; los días incompletos quedan sin marcar.
 - **Sesión**: los últimos crudos cargados se recuperan al volver a abrir la app (hasta “Empezar de nuevo”).
 - **Configuración**: rutas, claves, cadenas, verificadoras y carpetas (Hx y Backup).
 
