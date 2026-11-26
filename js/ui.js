@@ -1,0 +1,665 @@
+/* Pantallas y eventos. */
+(function () {
+  'use strict';
+  const VERSION = 'V.1';
+  const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const n0 = (v) => Math.round(v || 0).toLocaleString('en-US');
+  const pct = (v) => v == null ? '—' : v.toFixed(1) + '%';
+  const ico = {
+    copy: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>',
+    down: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
+    save: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M12 11v5"/><path d="m9.5 13.5 2.5 2.5 2.5-2.5"/></svg>',
+    file: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="stroke:#00FF88;margin-top:2px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>',
+    up: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
+    dn: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+    del: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>',
+    xls: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>'
+  };
+
+  let cfg = window.Config.cargar();
+  const S = {
+    tab: 'resumen', archivos: [], est: null, turno: 'AM', solo: false, canvas: null,
+    cad: { vista: 'cadena', cadena: '*', carga: 'Todo', tipo: 'Normal', otros: true },
+    camb: { carga: 'Todo' }, verJ: 'hoy', cfgSec: 'rutas',
+    hist: { fotos: null, turno: 'Ambos', ruta: '*', clave: '*', soloImg: true, dow: null, fTurno: 'Ambos' }
+  };
+
+  /* ---------- utilidades ---------- */
+  let tt;
+  function toast(msg, kind) {
+    const t = $('#toast'); t.textContent = msg; t.className = 'toast on ' + (kind || '');
+    clearTimeout(tt); tt = setTimeout(() => { t.className = 'toast'; }, kind === 'bad' ? 6000 : 3200);
+  }
+  function guardarCfg(recalcular = true) {
+    window.Config.guardar(cfg);
+    if (recalcular && S.archivos.length) S.est = C.clasificar(S.archivos, cfg);
+  }
+  const fechaTxt = (d) => C.fechaCorta(d);
+  const hoyTxt = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); };
+
+  /* ---------- archivos ---------- */
+  async function cargarArchivos(lista) {
+    const files = [...lista].filter((f) => /\.xls[xm]?$/i.test(f.name));
+    if (!files.length) { toast('Elige archivos de Excel del sistema (.xlsx).', 'bad'); return; }
+    for (const f of files) {
+      try {
+        const a = C.leerLibro(new Uint8Array(await f.arrayBuffer()), f.name, window.XLSX);
+        a.file = f;
+        S.archivos = S.archivos.filter((x) => x.fecha !== a.fecha && x.nombre !== a.nombre).concat(a).sort((x, y) => x.fecha.localeCompare(y.fecha));
+      } catch (e) { toast(e.message, 'bad'); }
+    }
+    if (!S.archivos.length) return;
+    S.est = C.clasificar(S.archivos, cfg);
+    S.turno = S.est.hayAM ? 'AM' : 'PM';
+    pintar();
+  }
+  function reiniciar() {
+    S.archivos = []; S.est = null; S.canvas = null; S.turno = 'AM';
+    pintar(); toast('Listo para cargar nuevos archivos.');
+  }
+
+  /* ---------- exportar a Excel ---------- */
+  async function exportar(sub, nombre, hojas) {
+    const wb = window.XLSX.utils.book_new();
+    hojas.forEach((h) => window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(h.aoa), h.nombre.slice(0, 31)));
+    const datos = window.XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    try {
+      const hx = await K.obtener('hx');
+      if (hx) {
+        const d = await K.subcarpeta(hx, sub);
+        await K.escribir(d, nombre, new Blob([datos]));
+        toast('Guardado en Hx\\' + sub + '\\' + nombre, 'ok');
+        return;
+      }
+    } catch (e) { /* sigue con la descarga */ }
+    K.descargar(nombre, new Blob([datos]), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    toast('Descargado: ' + nombre + ' (elige la carpeta Hx en Configuración para guardarlo directo).');
+  }
+
+  /* ================= RESUMEN ================= */
+  function vResumen() {
+    const v = $('#v-resumen');
+    if (!S.est) {
+      v.innerHTML = `
+        <div class="card pad" style="max-width:820px;margin:20px auto">
+          <button type="button" class="drop big" data-act="abrir" id="dropZone">
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width:36px;height:36px;stroke:url(#gr)"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+            <b>Arrastra aquí los crudos del sistema</b>
+            <span class="muted">El de hoy (rutas AM) y el de mañana (rutas PM). Puedes cargar uno o los dos.</span>
+          </button>
+          <p class="dim" style="font-size:12px;line-height:1.6;margin:14px 4px 0">La app reconoce cada archivo por la columna Fecha. Lo verificado hoy es AM, el crudo de mañana es PM y lo verificado ayer (la carga PM de ayer) no se vuelve a reportar.</p>
+        </div>`;
+      return;
+    }
+    const E = S.est, d = C.deteccion(E, cfg);
+    const res = C.resumen(E, cfg, S.turno, S.solo);
+    const tabs = [];
+    if (E.hayAM) tabs.push(['AM', 'Rutas AM · ' + fechaTxt(E.amFecha)]);
+    if (E.hayPM) tabs.push(['PM', 'Rutas PM · ' + fechaTxt(E.pmFecha)]);
+    if (!tabs.some((t) => t[0] === S.turno) && tabs.length) S.turno = tabs[0][0];
+    const archivos = S.archivos.map((a) => {
+      const esPM = a.fecha > E.corteDia;
+      const ult = a.lineas.reduce((m, l) => { for (const f of [l.grabado, l.verif]) if (f && (f.d > m.d || (f.d === m.d && f.m > m.m))) m = f; return m; }, { d: '', m: 0 });
+      return `<div class="file">${ico.file}<div style="min-width:0;flex:1">
+        <div class="tag">${esPM ? 'MAÑANA · RUTAS PM' : a.fecha === E.corteDia ? 'HOY · RUTAS AM' : 'FECHA ANTERIOR'}</div>
+        <div class="nm">${esc(a.nombre)}</div>
+        <div class="mt">Fecha ${esc(fechaTxt(a.fecha))} · ${n0(a.lineas.length)} líneas · último movimiento ${C.hora(ult.m)}</div></div></div>`;
+    }).join('');
+    const det = [
+      ['Rutas AM en la imagen', d.amRutas, 'var(--g)'],
+      ['Rutas PM en la imagen', d.pmRutas, 'var(--g)'],
+      ['Cargadas ayer en la tarde (no se reportan)', d.ayerRutas, 'var(--tx2)'],
+      ['Rutas fuera de la imagen (Configuración)', d.fueraRutas, 'var(--tx2)'],
+      ['Líneas AM sin verificar', d.sinVerifLineas, d.sinVerifLineas ? 'var(--warn)' : 'var(--tx2)']
+    ].map(([l, n, c]) => `<div class="det"><span>${l}</span><b style="color:${c}">${n}</b></div>`).join('');
+    const avisos = [];
+    if (d.sinVerifLineas) avisos.push(`<div class="info warn">Sin verificar todavía: rutas ${d.sinVerifRutas.map(esc).join(', ')}. Se cuentan como AM.</div>`);
+    if (d.nuevas.length) avisos.push(`<div class="info warn">Rutas que no están en Configuración: ${d.nuevas.map((r) => esc(r.ruta + ' ' + r.nombre)).join(', ')}. <button type="button" class="btn sm" data-act="agregarNuevas" style="margin-top:8px">Agregarlas (fuera de la imagen)</button></div>`);
+    if (d.ambos.length) avisos.push(`<div class="info">Con carga AM y PM: rutas ${d.ambos.map(esc).join(', ')}. Cada carga sale en su imagen.</div>`);
+
+    v.innerHTML = `
+      <div class="row">
+        <aside class="side">
+          <div class="card pad stack">
+            <h2>Archivos del sistema</h2>
+            ${archivos}
+            <button type="button" class="drop" data-act="abrir" id="dropZone">Arrastra otro crudo aquí o haz clic para buscarlo</button>
+          </div>
+          <div class="card pad stack">
+            <h2>Clientes incluidos</h2>
+            <div class="seg full" role="group" aria-label="Clientes incluidos">
+              <button type="button" data-act="solo" data-v="0" class="${S.solo ? '' : 'on'}">Todos los de la ruta</button>
+              <button type="button" data-act="solo" data-v="1" class="${S.solo ? 'on' : ''}">Solo supermercados</button>
+            </div>
+            <p class="dim" style="margin:0;font-size:12px;line-height:1.5">${S.solo ? 'Solo clientes de cadenas marcadas como supermercado en Configuración.' : 'Suma todo lo que lleva la ruta, como el reporte de Excel.'}</p>
+          </div>
+          <div class="card pad" style="display:flex;flex-direction:column;gap:4px">
+            <h2 style="margin-bottom:6px">Detección automática</h2>
+            ${det}
+            <div class="stack" style="margin-top:10px">${avisos.join('')}
+              <div class="info">Corte: ${esc(fechaTxt(E.corteDia))} ${C.hora(E.corteMin)}. AM = verificado hoy · PM = crudo de mañana · lo verificado ayer se descarta.</div>
+            </div>
+          </div>
+        </aside>
+        <div class="mainc">
+          <div class="bar" style="margin:0">
+            <div class="seg" role="tablist" aria-label="Turno">${tabs.map(([t, l]) => `<button type="button" role="tab" data-act="turno" data-v="${t}" class="${S.turno === t ? 'on' : ''}">${l}</button>`).join('')}</div>
+            <div class="right">
+              <button type="button" class="btn pri" data-act="copiar">${ico.copy} Copiar imagen para WhatsApp</button>
+              <button type="button" class="btn" data-act="descargar">${ico.down} Descargar imagen</button>
+              <button type="button" class="btn" data-act="historial">${ico.save} Guardar en historial</button>
+            </div>
+          </div>
+          <div class="card pad stack">
+            <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px" class="muted"><span>Vista previa — así sale la imagen</span>
+              <span class="mono dim" style="margin-left:auto">${res.filas.length} rutas · ${res.cols.length} claves con cantidad</span></div>
+            <div class="preview" id="preview">${res.filas.length ? '' : '<div class="empty" style="background:var(--s1);color:var(--tx2)"><b>No hay rutas para esta imagen</b>Revisa en Configuración qué rutas y claves van en la imagen.</div>'}</div>
+          </div>
+          <div class="card pad" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <h2 style="margin-right:6px">Rutas en esta imagen</h2>
+            <div class="chips">${res.filas.map((f) => `<span class="chip"><b>${esc(f.ruta)}</b>${esc(f.nombre)}</span>`).join('')}</div>
+            <span class="dim" style="font-size:12px;margin-left:auto">Columnas y filas en cero se ocultan solas</span>
+          </div>
+        </div>
+      </div>`;
+    if (res.filas.length) {
+      S.canvas = IMG.dibujar(res, 2);
+      S.canvas.style.width = (S.canvas.width / 2) + 'px';
+      $('#preview').appendChild(S.canvas);
+    } else S.canvas = null;
+    S.res = res;
+  }
+
+  async function guardarHistorial() {
+    const E = S.est; if (!E) return;
+    let hx;
+    try { hx = await K.obtener('hx'); } catch (e) { hx = null; }
+    if (!hx) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); irA('config'); S.cfgSec = 'carpetas'; vConfig(); return; }
+    const d = C.deteccion(E, cfg);
+    if (d.sinVerifLineas && !confirm('Hay ' + d.sinVerifLineas + ' líneas AM sin verificar (rutas ' + d.sinVerifRutas.join(', ') + ').\n¿Guardar de todos modos?')) return;
+    const dir = await K.subcarpeta(hx, 'Historial');
+    const hechos = [];
+    for (const t of ['AM', 'PM']) {
+      if ((t === 'AM' && !E.hayAM) || (t === 'PM' && !E.hayPM)) continue;
+      const foto = C.fotoHistorial(E, cfg, t, S.archivos);
+      const nombre = foto.fecha + '_' + t + '.json';
+      if (await K.existe(dir, nombre) && !confirm('Ya existe ' + nombre + ' en el historial. ¿Reemplazarlo con este corte?')) continue;
+      await K.escribir(dir, nombre, JSON.stringify(foto));
+      hechos.push(nombre);
+    }
+    if (cfg.carpetas.copiarCrudos) {
+      try {
+        const bk = await K.obtener('backup');
+        if (bk) {
+          const cd = await K.subcarpeta(bk, 'Crudos/' + E.corteDia);
+          for (const a of S.archivos) if (a.file) await K.escribir(cd, a.nombre, a.file);
+        }
+      } catch (_) { /* el respaldo de crudos es opcional */ }
+    }
+    S.hist.fotos = null;
+    toast(hechos.length ? 'Guardado en historial: ' + hechos.join(', ') : 'No se guardó nada.', hechos.length ? 'ok' : '');
+  }
+
+  /* ================= CADENAS ================= */
+  const sinDatos = (txt) => `<div class="card empty"><b>Carga los crudos en Resumen</b>${txt || ''}</div>`;
+  function matrizHTML(m, primera, extra) {
+    if (!m.filas.length) return '<div class="empty">No hay líneas con estos filtros.</div>';
+    const cab = `<tr><th>${primera}</th>${extra ? '<th>CADENA</th>' : ''}${m.cols.map((c) => `<th class="n">${esc(c)}</th>`).join('')}<th class="n tc">TOTAL</th></tr>`;
+    const max = Math.max(1, ...m.filas.flatMap((f) => f.vals));
+    const filas = m.filas.map((f) => `<tr><td>${esc(f.nombre)}</td>${extra ? `<td class="dim">${esc(f.cadena || '')}</td>` : ''}${f.vals.map((v) => v ? `<td class="n" style="background:rgba(0,210,254,${(0.03 + 0.28 * v / max).toFixed(3)})">${n0(v)}</td>` : '<td class="n z">·</td>').join('')}<td class="n tc">${n0(f.total)}</td></tr>`).join('');
+    const tot = `<tr class="tot"><td>Total</td>${extra ? '<td></td>' : ''}${m.totales.map((v) => `<td class="n">${n0(v)}</td>`).join('')}<td class="n tc">${n0(m.total)}</td></tr>`;
+    return `<div class="tw"><table class="t"><thead>${cab}</thead><tbody>${filas}${tot}</tbody></table></div>`;
+  }
+  function vCadenas() {
+    const v = $('#v-cadenas');
+    if (!S.est) { v.innerHTML = sinDatos(); return; }
+    const f = S.cad;
+    const m = C.matrizCadenas(S.est, cfg, f);
+    const kp = C.matrizCadenas(S.est, cfg, { ...f, vista: 'cadena', otros: false });
+    const opCad = ['*'].concat(cfg.cadenas.map((c) => c.nombre), f.otros ? ['Otros clientes'] : []);
+    const cargaTxt = { Todo: 'AM + PM', AM: 'Solo AM', PM: 'Solo PM' }[f.carga];
+    v.innerHTML = `
+      <div class="bar">
+        <div class="seg" role="tablist" aria-label="Vista">
+          <button type="button" data-act="vista" data-v="cadena" class="${f.vista === 'cadena' ? 'on' : ''}">Cadena × Clave</button>
+          <button type="button" data-act="vista" data-v="tienda" class="${f.vista === 'tienda' ? 'on' : ''}">Tienda × Clave</button>
+        </div>
+        ${f.vista === 'tienda' ? `<label class="fld">Cadena<select data-f="cadena">${opCad.map((c) => `<option value="${esc(c)}" ${c === f.cadena ? 'selected' : ''}>${c === '*' ? 'Todas' : esc(c)}</option>`).join('')}</select></label>` : ''}
+        <label class="fld">Carga<select data-f="carga">${[['Todo', 'AM + PM'], ['AM', 'Solo AM'], ['PM', 'Solo PM']].map(([k, l]) => `<option value="${k}" ${k === f.carga ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="fld">Tipo<select data-f="tipo">${['Normal', 'Cambios', 'Reposición', 'Todo'].map((t) => `<option ${t === f.tipo ? 'selected' : ''} value="${t}">${t === 'Normal' ? 'Venta normal' : t}</option>`).join('')}</select></label>
+        <label class="chk" style="height:38px"><input type="checkbox" data-f="otros" ${f.otros ? 'checked' : ''}> Incluir otros clientes</label>
+        <div class="right"><button type="button" class="btn" data-act="expCad">${ico.xls} Exportar a Excel</button></div>
+      </div>
+      <div class="kpis">${kp.filas.map((r) => `<div class="kpi"><div class="l">${esc(r.nombre)}</div><div class="v">${n0(r.total)}</div><div class="s">${r.tiendas} tiendas</div></div>`).join('')}</div>
+      <div class="card">
+        <div class="hd"><h3>${f.vista === 'cadena' ? 'Unidades por cadena y clave' : (f.cadena === '*' ? 'Todas las tiendas' : esc(f.cadena)) + ' — unidades por tienda y clave'}</h3>
+          <span class="note">${cargaTxt} · ${f.tipo === 'Normal' ? 'venta normal' : f.tipo.toLowerCase()} · corte ${esc(fechaTxt(S.est.corteDia))} ${C.hora(S.est.corteMin)}</span></div>
+        ${matrizHTML(m, f.vista === 'cadena' ? 'CADENA' : 'TIENDA', f.vista === 'tienda' && f.cadena === '*')}
+      </div>`;
+    S.matriz = m;
+  }
+  function aoaMatriz(m, primera) {
+    return [[primera].concat(m.cols, 'TOTAL')].concat(m.filas.map((f) => [f.nombre].concat(f.vals, f.total))).concat([['Total'].concat(m.totales, m.total)]);
+  }
+
+  /* ================= CAMBIOS ================= */
+  function vCambios() {
+    const v = $('#v-cambios');
+    if (!S.est) { v.innerHTML = sinDatos(); return; }
+    const r = C.cambios(S.est, cfg, S.camb.carga);
+    const maxU = Math.max(1, ...r.porClave.map((x) => x.u));
+    const w = (p) => p != null && p >= 2.5 ? 'color:var(--warn)' : 'color:var(--tx2)';
+    v.innerHTML = `
+      <div class="bar">
+        <h1 class="t">Cambios despachados</h1>
+        <span class="dim" style="font-size:13px;align-self:center">corte ${esc(fechaTxt(S.est.corteDia))} ${C.hora(S.est.corteMin)}</span>
+        <div class="seg" role="tablist" aria-label="Carga">${[['Todo', 'AM + PM'], ['AM', 'Solo AM'], ['PM', 'Solo PM']].map(([k, l]) => `<button type="button" data-act="cCarga" data-v="${k}" class="${S.camb.carga === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <div class="right"><button type="button" class="btn" data-act="expCamb">${ico.xls} Exportar a Excel</button></div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">Unidades en cambios</div><div class="v">${n0(r.total)}</div></div>
+        <div class="kpi"><div class="l">Sobre la venta normal</div><div class="v" style="color:var(--warn)">${r.pct == null ? '—' : r.pct.toFixed(2) + '%'}</div><div class="s">${n0(r.normal)} u. normales</div></div>
+        <div class="kpi"><div class="l">Rutas con cambios</div><div class="v">${r.rutas}</div></div>
+        <div class="kpi"><div class="l">Clientes con cambios</div><div class="v">${r.clientes}</div></div>
+      </div>
+      ${!r.total ? '<div class="card empty"><b>Sin cambios</b>No hay líneas de tipo Cambios en esta carga.</div>' : `
+      <div class="row">
+        <div class="card" style="flex:1 1 480px;min-width:0">
+          <div class="hd"><h3>Por clave</h3><span class="note">Barra = unidades de cambio · % sobre lo despachado normal de esa clave</span></div>
+          <div class="tw"><table class="t"><thead><tr><th>CLAVE</th><th style="width:45%"></th><th class="n">CAMBIOS</th><th class="n">NORMAL</th><th class="n">%</th></tr></thead><tbody>
+          ${r.porClave.map((x) => `<tr><td class="mono" style="color:var(--c)">${esc(x.codigo)}</td><td><div class="barra"><i style="width:${Math.round(x.u / maxU * 100)}%"></i></div></td><td class="n">${n0(x.u)}</td><td class="n dim">${n0(x.normal)}</td><td class="n" style="${w(x.pct)}">${pct(x.pct)}</td></tr>`).join('')}
+          <tr class="tot"><td>Total</td><td></td><td class="n">${n0(r.total)}</td><td class="n">${n0(r.porClave.reduce((s, x) => s + x.normal, 0))}</td><td class="n">${pct(r.total / Math.max(1, r.porClave.reduce((s, x) => s + x.normal, 0)) * 100)}</td></tr>
+          </tbody></table></div>
+        </div>
+        <div style="flex:1 1 440px;min-width:0;display:flex;flex-direction:column;gap:16px">
+          <div class="card"><div class="hd"><h3>Por ruta</h3></div>
+            <div class="tw"><table class="t"><thead><tr><th>RUTA</th><th class="n">CAMBIOS</th><th class="n">CLIENTES</th><th class="n">% DE SU VENTA</th></tr></thead><tbody>
+            ${r.porRuta.map((x) => `<tr><td><span class="mono" style="color:var(--g);margin-right:8px">${esc(x.ruta)}</span>${esc(x.nombre)}</td><td class="n">${n0(x.u)}</td><td class="n dim">${x.clientes}</td><td class="n" style="${w(x.pct)}">${pct(x.pct)}</td></tr>`).join('')}
+            <tr class="tot"><td>Total</td><td class="n">${n0(r.total)}</td><td class="n">${r.clientes}</td><td class="n">${pct(r.pct)}</td></tr></tbody></table></div></div>
+          <div class="card"><div class="hd"><h3>Por cliente</h3></div>
+            <div class="tw" style="max-height:420px;overflow:auto"><table class="t"><thead><tr><th>CLIENTE</th><th>RUTA</th><th class="n">CAMBIOS</th></tr></thead><tbody>
+            ${r.porCliente.map((x) => `<tr><td>${esc(x.cliente)}<div class="dim" style="font-size:11px">${esc(x.cadena)}</div></td><td class="dim">${esc(x.ruta + ' ' + x.rutaNombre)}</td><td class="n">${n0(x.u)}</td></tr>`).join('')}
+            <tr class="tot"><td>Total</td><td></td><td class="n">${n0(r.total)}</td></tr></tbody></table></div></div>
+        </div>
+      </div>`}`;
+    S.cambiosR = r;
+  }
+
+  /* ================= VERIFICACIÓN ================= */
+  function vVerif() {
+    const v = $('#v-verif');
+    if (!S.est) { v.innerHTML = sinDatos(); return; }
+    const hoy = S.est.corteDia, ayer = C.sumarDias(hoy, -1);
+    const dia = S.verJ === 'hoy' ? hoy : ayer;
+    const r = C.verificacion(S.est, cfg, dia);
+    S.verifR = r;
+    let tl = '';
+    if (r.filas.length) {
+      const ini = Math.floor(r.ini / 30) * 30, fin = Math.max(ini + 60, Math.ceil((r.fin + 1) / 30) * 30);
+      const pos = (m) => ((m - ini) / (fin - ini) * 100).toFixed(2) + '%';
+      const marcas = []; for (let m = ini; m <= fin; m += 30) marcas.push(C.hora(m));
+      tl = `<div class="card pad stack">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:baseline"><h3 style="margin:0;font-size:15px">Línea de tiempo</h3><span class="dim" style="font-size:12px">Cada marca es un vale verificado</span></div>
+        <div class="tl"><span></span><div class="eje">${marcas.map((m) => `<span>${m}</span>`).join('')}</div>
+        ${r.filas.map((f) => `<span style="font-size:13px;font-weight:500">${esc(f.nombre)}</span><div class="pista"><div class="banda" style="left:${pos(f.ini)};width:calc(${pos(f.fin)} - ${pos(f.ini)} + 2px)"></div>${f.marcas.map((m) => `<div class="marca" style="left:${pos(m)}" title="${C.hora(m)}"></div>`).join('')}</div>`).join('')}
+        </div>
+        <p class="dim" style="margin:4px 0 0;font-size:12px;line-height:1.5">El sistema guarda una hora por vale, no por línea: las líneas por hora son un promedio de la ventana de trabajo.</p></div>`;
+    }
+    v.innerHTML = `
+      <div class="bar">
+        <h1 class="t">Carga de verificación</h1>
+        <div class="seg" role="tablist" aria-label="Jornada">
+          <button type="button" data-act="verJ" data-v="hoy" class="${S.verJ === 'hoy' ? 'on' : ''}">Mañana ${esc(fechaTxt(hoy))} · carga AM</button>
+          <button type="button" data-act="verJ" data-v="ayer" class="${S.verJ === 'ayer' ? 'on' : ''}">Tarde ${esc(fechaTxt(ayer))} · carga PM</button>
+        </div>
+        <div class="right"><button type="button" class="btn" data-act="expVer">${ico.xls} Exportar a Excel</button></div>
+      </div>
+      ${!r.filas.length ? '<div class="card empty"><b>Sin verificaciones en esta jornada</b>Los crudos cargados no tienen líneas verificadas ese día.</div>' : `
+      <div class="card" style="margin-bottom:16px"><div class="tw"><table class="t"><thead><tr><th>VERIFICADORA</th><th class="n">VALES</th><th class="n">LÍNEAS</th><th class="n">UNIDADES</th><th class="n">RUTAS</th><th>VENTANA</th><th class="n">LÍNEAS / HORA</th></tr></thead><tbody>
+        ${r.filas.map((f) => `<tr><td><b style="font-weight:600">${esc(f.nombre)}</b><div class="mono dim" style="font-size:11px">usuario ${esc(f.codigo)}</div></td><td class="n">${f.vales}</td><td class="n">${n0(f.lineas)}</td><td class="n">${n0(f.u)}</td><td class="n dim">${f.rutas}</td><td class="mono dim">${C.hora(f.ini)} – ${C.hora(f.fin)}</td><td class="n" style="color:var(--g)">${f.lph ?? '—'}</td></tr>`).join('')}
+        <tr class="tot"><td>Total</td><td class="n">${r.tot.vales}</td><td class="n">${n0(r.tot.lineas)}</td><td class="n">${n0(r.tot.u)}</td><td></td><td class="mono">${C.hora(r.ini)} – ${C.hora(r.fin)}</td><td></td></tr>
+      </tbody></table></div></div>${tl}`}`;
+  }
+
+  /* ================= HISTORIAL ================= */
+  async function leerHistorial(pedir) {
+    const hx = await K.obtener('hx', pedir);
+    if (!hx) return false;
+    const dir = await K.subcarpeta(hx, 'Historial');
+    const nombres = (await K.listar(dir, '.json')).filter((n) => /^\d{4}-\d{2}-\d{2}_(AM|PM)\.json$/.test(n));
+    const fotos = [];
+    for (const n of nombres) { try { fotos.push(await K.leerJSON(dir, n)); } catch (_) {} }
+    S.hist.fotos = fotos.sort((a, b) => (a.fecha + a.turno).localeCompare(b.fecha + b.turno));
+    return true;
+  }
+  function graficaSVG(pts) {
+    if (pts.length < 2) return `<div class="empty" style="border:1px dashed var(--line2);border-radius:10px"><b>Se dibuja con al menos 2 cortes</b>Hay ${pts.length} con estos filtros.</div>`;
+    const W = 900, H = 240, P = { l: 56, r: 16, t: 14, b: 34 };
+    const max = Math.max(...pts.map((p) => p.u)) * 1.1 || 1;
+    const x = (i) => P.l + i * (W - P.l - P.r) / (pts.length - 1);
+    const y = (u) => P.t + (H - P.t - P.b) * (1 - u / max);
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => Math.round(max * k));
+    const paso = Math.max(1, Math.ceil(pts.length / 12));
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Unidades por fecha">
+      ${ticks.map((t) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#1E293B"/><text x="${P.l - 8}" y="${y(t) + 4}" fill="#64748B" font-size="11" text-anchor="end" font-family="JetBrains Mono">${n0(t)}</text>`).join('')}
+      <polyline fill="none" stroke="url(#gr)" stroke-width="2.5" stroke-linejoin="round" points="${pts.map((p, i) => x(i) + ',' + y(p.u)).join(' ')}"/>
+      ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.u)}" r="3.5" fill="#0A0E17" stroke="#00FF88" stroke-width="2"><title>${p.fecha}: ${n0(p.u)}</title></circle>${i % paso === 0 ? `<text x="${x(i)}" y="${H - 12}" fill="#64748B" font-size="11" text-anchor="middle">${esc(C.fechaCorta(p.fecha))}</text>` : ''}`).join('')}
+    </svg>`;
+  }
+  async function vHist() {
+    const v = $('#v-hist');
+    const st = await K.estado('hx');
+    if (st.estado === 'sin') {
+      v.innerHTML = `<div class="card empty"><b>Elige la carpeta Hx</b>El historial se guarda en OneDrive: ${esc(cfg.carpetas.hx)}<br><br><button type="button" class="btn pri" data-act="irCarpetas">Ir a Configuración › Carpetas</button></div>`;
+      return;
+    }
+    if (!S.hist.fotos) {
+      let ok = false;
+      if (st.estado === 'ok') { try { ok = await leerHistorial(false); } catch (_) {} }
+      if (!ok) { v.innerHTML = `<div class="card empty"><b>Dar acceso a la carpeta Hx</b>El navegador pide confirmar el permiso cada vez que se abre la app.<br><br><button type="button" class="btn pri" data-act="leerHist">Abrir historial</button></div>`; return; }
+    }
+    const H = S.hist, F = H.fotos;
+    const rutasImg = new Set(cfg.rutas.filter((r) => r.enImagen).map((r) => r.ruta));
+    const fRutas = H.soloImg ? rutasImg : null;
+    const rutas = [...new Set(F.flatMap((x) => Object.keys(x.rutas || {})))].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+    const nombresR = Object.assign({}, ...F.map((x) => x.rutas || {}));
+    const claves = [...new Set(F.flatMap((x) => x.filas.map((r) => r[4])))];
+    const pts = C.tendencia(F, { turno: H.turno, ruta: H.ruta, clave: H.clave, rutas: fRutas });
+    if (H.dow == null) { const ult = F[F.length - 1]; H.dow = ult ? (C.partes(ult.fecha).dow + 1) % 7 : 1; }
+    const pr = C.pronostico(F, cfg, { turno: H.fTurno, dow: +H.dow, n: 4, rutas: fRutas });
+    const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const sel = (f, ops, val) => `<select data-h="${f}">${ops.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    v.innerHTML = `
+      <div class="row">
+        <aside class="side">
+          <div class="card pad stack">
+            <h2>Cortes guardados (${F.length})</h2>
+            <div class="stack" style="max-height:520px;overflow:auto">
+            ${F.length ? F.slice().reverse().map((x) => { const u = x.filas.reduce((s, r) => s + r[7], 0); return `<div class="file" style="align-items:center"><span class="mono" style="font-size:12px;padding:2px 8px;border-radius:6px;background:var(--bg);color:var(--c)">${x.turno}</span><div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(C.fechaCorta(x.fecha))} ${x.fecha.slice(0, 4)}</div><div class="dim" style="font-size:12px">Corte ${esc(x.corte && x.corte.hora)} · ${Object.keys(x.rutas || {}).length} rutas · ${n0(u)} u.</div></div></div>`; }).join('') : '<div class="dim" style="font-size:13px">Todavía no hay cortes. Usa “Guardar en historial” en Resumen.</div>'}
+            </div>
+            <button type="button" class="btn sm" data-act="leerHist">Volver a leer la carpeta</button>
+          </div>
+        </aside>
+        <div class="mainc">
+          <div class="card pad stack">
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+              <h3 style="margin:0;font-size:15px;align-self:center">Tendencia diaria</h3>
+              <label class="fld" style="margin-left:auto">Turno${sel('turno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.turno)}</label>
+              <label class="fld">Ruta${sel('ruta', [['*', 'Todas']].concat(rutas.map((r) => [r, r + ' ' + (nombresR[r] || '')])), H.ruta)}</label>
+              <label class="fld">Clave${sel('clave', [['*', 'Todas']].concat(claves.map((c) => [c, c])), H.clave)}</label>
+              <label class="chk" style="height:38px"><input type="checkbox" data-h="soloImg" ${H.soloImg ? 'checked' : ''}> Solo rutas de la imagen</label>
+            </div>
+            ${graficaSVG(pts)}
+            <p class="dim" style="margin:0;font-size:12px">Unidades de venta normal (sin cambios). Cada corte es una foto a la hora en que se generó el crudo.</p>
+          </div>
+          <div class="card">
+            <div class="hd" style="align-items:flex-end">
+              <h3>Pronóstico para producción</h3>
+              <span class="note">Promedio de ${pr.fechas.length || 0} corte(s) de ${DIAS[H.dow].toLowerCase()} · máx. 4</span>
+              <label class="fld" style="margin-left:auto">Día${sel('dow', DIAS.map((d, i) => [i, d]), H.dow)}</label>
+              <label class="fld">Turno${sel('fTurno', [['Ambos', 'AM + PM'], ['AM', 'AM'], ['PM', 'PM']], H.fTurno)}</label>
+              <button type="button" class="btn sm" data-act="expPron" style="align-self:flex-end">${ico.xls} Excel</button>
+            </div>
+            ${pr.filas.length ? `<div class="tw"><table class="t"><thead><tr><th>CLAVE</th><th class="n">PROMEDIO</th><th class="n">ÚLTIMO</th><th class="n">TENDENCIA</th><th class="n">PARRILLAS</th>${pr.fechas.map((d) => `<th class="n">${esc(C.fechaCorta(d))}</th>`).join('')}</tr></thead><tbody>
+              ${pr.filas.map((x) => `<tr><td class="mono" style="color:var(--c)">${esc(x.codigo)}</td><td class="n" style="color:var(--g)">${n0(x.prom)}</td><td class="n">${n0(x.ult)}</td><td class="n" style="color:${x.tend == null ? 'var(--tx3)' : x.tend >= 0 ? 'var(--g)' : 'var(--warn)'}">${x.tend == null ? '—' : (x.tend >= 0 ? '+' : '') + x.tend.toFixed(0) + '%'}</td><td class="n">${x.parrillas ?? '—'}</td>${x.serie.map((s) => `<td class="n dim">${n0(s)}</td>`).join('')}</tr>`).join('')}
+              <tr class="tot"><td>Total</td><td class="n">${n0(pr.filas.reduce((s, x) => s + x.prom, 0))}</td><td class="n">${n0(pr.filas.reduce((s, x) => s + x.ult, 0))}</td><td></td><td class="n">${n0(pr.filas.reduce((s, x) => s + (x.parrillas || 0), 0))}</td>${pr.fechas.map((_, j) => `<td class="n">${n0(pr.filas.reduce((s, x) => s + x.serie[j], 0))}</td>`).join('')}</tr>
+            </tbody></table></div>` : `<div class="empty">Todavía no hay cortes de ${DIAS[H.dow].toLowerCase()} para este turno.</div>`}
+          </div>
+        </div>
+      </div>`;
+    S.pron = pr;
+  }
+
+  /* ================= CONFIGURACIÓN ================= */
+  const sw = (on, attrs) => `<button type="button" class="sw" role="switch" aria-checked="${on ? 'true' : 'false'}" ${attrs}></button>`;
+  const mover = (sec, i) => `<span style="display:inline-flex;gap:2px"><button type="button" class="btn sm icon ghost" data-act="mover" data-sec="${sec}" data-i="${i}" data-d="-1" aria-label="Subir">${ico.up}</button><button type="button" class="btn sm icon ghost" data-act="mover" data-sec="${sec}" data-i="${i}" data-d="1" aria-label="Bajar">${ico.dn}</button></span>`;
+  const borrar = (sec, i) => `<button type="button" class="btn sm icon ghost danger" data-act="borrar" data-sec="${sec}" data-i="${i}" aria-label="Quitar">${ico.del}</button>`;
+  const inp = (sec, i, k, val, ph, extra) => `<input type="text" data-sec="${sec}" data-i="${i}" data-k="${k}" value="${esc(val)}" placeholder="${esc(ph || '')}" ${extra || ''}>`;
+
+  async function vConfig() {
+    const v = $('#v-config');
+    const secs = [['rutas', 'Rutas'], ['claves', 'Claves de producto'], ['cadenas', 'Cadenas'], ['verificadoras', 'Verificadoras'], ['carpetas', 'Carpetas OneDrive']];
+    const s = S.cfgSec;
+    const nombresDatos = S.est ? C.deteccion(S.est, cfg).nombres : {};
+    let cuerpo = '', titulo = '', ayuda = '', agregar = true;
+    if (s === 'rutas') {
+      titulo = 'Rutas'; ayuda = 'Qué rutas entran a la imagen, en qué orden y con qué nombre. Las demás siguen contando en Cadenas, Cambios y Verificación.';
+      cuerpo = `<table class="t cfg"><thead><tr><th>ORDEN</th><th>RUTA</th><th>NOMBRE EN EL SISTEMA</th><th>NOMBRE EN LA IMAGEN</th><th>TURNO</th><th>EN LA IMAGEN</th><th></th></tr></thead><tbody>
+        ${cfg.rutas.map((r, i) => `<tr><td>${mover('rutas', i)}</td><td style="width:90px">${inp('rutas', i, 'ruta', r.ruta, '', 'style="width:80px;min-width:0" class="mono"')}</td>
+          <td class="muted">${esc(nombresDatos[r.ruta] || r.nombreSistema || '—')}</td>
+          <td>${inp('rutas', i, 'nombreImagen', r.nombreImagen, nombresDatos[r.ruta] || r.nombreSistema)}</td>
+          <td><select data-sec="rutas" data-i="${i}" data-k="turno">${[['auto', 'Automático'], ['AM', 'Solo AM'], ['PM', 'Solo PM']].map(([k, l]) => `<option value="${k}" ${r.turno === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+          <td>${sw(r.enImagen, `data-act="toggle" data-sec="rutas" data-i="${i}" data-k="enImagen" aria-label="Ruta ${esc(r.ruta)} en la imagen"`)}</td><td>${borrar('rutas', i)}</td></tr>`).join('')}
+      </tbody></table>`;
+    } else if (s === 'claves') {
+      titulo = 'Claves de producto'; ayuda = 'Columnas de la imagen en este orden. Las unidades por parrilla y bolsa se usan en el pronóstico.';
+      cuerpo = `<table class="t cfg"><thead><tr><th>ORDEN</th><th>CLAVE</th><th>DESCRIPCIÓN</th><th>U / PARRILLA</th><th>U / BOLSA</th><th>EN LA IMAGEN</th><th></th></tr></thead><tbody>
+        ${cfg.claves.map((c, i) => `<tr><td>${mover('claves', i)}</td><td style="width:110px">${inp('claves', i, 'codigo', c.codigo, '', 'style="width:96px;min-width:0" class="mono"')}</td>
+          <td>${inp('claves', i, 'descripcion', c.descripcion)}</td>
+          <td><input type="number" min="0" data-sec="claves" data-i="${i}" data-k="parrilla" value="${esc(c.parrilla)}"></td>
+          <td><input type="number" min="0" data-sec="claves" data-i="${i}" data-k="bolsa" value="${esc(c.bolsa)}"></td>
+          <td>${sw(c.enImagen, `data-act="toggle" data-sec="claves" data-i="${i}" data-k="enImagen" aria-label="Clave ${esc(c.codigo)} en la imagen"`)}</td><td>${borrar('claves', i)}</td></tr>`).join('')}
+      </tbody></table>`;
+    } else if (s === 'cadenas') {
+      titulo = 'Cadenas de supermercado'; ayuda = 'Se reconocen por palabras en el nombre del cliente, separadas por coma. La primera regla que coincide gana: deja las más específicas arriba.';
+      const cuenta = {};
+      if (S.est) { const vistos = {}; S.est.lineas.forEach((l) => { if (l.cad) { (vistos[l.cad.nombre] = vistos[l.cad.nombre] || new Set()).add(l.clienteNombre); } }); Object.keys(vistos).forEach((k) => { cuenta[k] = vistos[k].size; }); }
+      cuerpo = `<table class="t cfg"><thead><tr><th>PRIORIDAD</th><th>CADENA</th><th>PALABRAS CLAVE</th><th class="n">CLIENTES EN EL CRUDO</th><th>ES SUPERMERCADO</th><th></th></tr></thead><tbody>
+        ${cfg.cadenas.map((c, i) => `<tr><td>${mover('cadenas', i)}</td><td>${inp('cadenas', i, 'nombre', c.nombre)}</td><td>${inp('cadenas', i, 'claves', c.claves, 'PALABRA, OTRA PALABRA')}</td>
+          <td class="n">${S.est ? (cuenta[c.nombre] || 0) : '—'}</td>
+          <td>${sw(c.esSuper, `data-act="toggle" data-sec="cadenas" data-i="${i}" data-k="esSuper" aria-label="${esc(c.nombre)} es supermercado"`)}</td><td>${borrar('cadenas', i)}</td></tr>`).join('')}
+      </tbody></table>`;
+    } else if (s === 'verificadoras') {
+      titulo = 'Verificadoras'; ayuda = 'El crudo solo trae el código de usuario (Verificado Usuario). Ponle nombre a cada código.';
+      const conocidos = new Set(cfg.verificadoras.map((x) => x.codigo));
+      const enDatos = S.est ? [...new Set(S.est.lineas.map((l) => l.verifUsuario).filter(Boolean))].filter((c) => !conocidos.has(c)) : [];
+      cuerpo = `<table class="t cfg"><thead><tr><th>CÓDIGO</th><th>NOMBRE</th><th>ACTIVA</th><th></th></tr></thead><tbody>
+        ${cfg.verificadoras.map((x, i) => `<tr><td style="width:120px">${inp('verificadoras', i, 'codigo', x.codigo, '0000', 'style="width:100px;min-width:0" class="mono"')}</td><td>${inp('verificadoras', i, 'nombre', x.nombre)}</td>
+          <td>${sw(x.activa, `data-act="toggle" data-sec="verificadoras" data-i="${i}" data-k="activa" aria-label="Activa"`)}</td><td>${borrar('verificadoras', i)}</td></tr>`).join('')}
+      </tbody></table>
+      ${enDatos.length ? `<div class="info warn" style="margin:12px 18px">Códigos en el crudo sin nombre: ${enDatos.map(esc).join(', ')}. <button type="button" class="btn sm" data-act="agregarVerif">Agregarlos</button></div>` : ''}`;
+    } else {
+      titulo = 'Carpetas de OneDrive'; ayuda = 'Hx guarda el historial y los reportes, cada uno en su subcarpeta. Backup guarda respaldos de la configuración y copia de los crudos.'; agregar = false;
+      const filas = [];
+      for (const [k, l, sub] of [['hx', 'Reportería (Hx)', 'Historial · Cadenas · Cambios · Verificacion · Pronostico'], ['backup', 'Respaldo (Backup)', 'Config · Crudos']]) {
+        const st = await K.estado(k);
+        const est = st.estado === 'ok' ? `<span style="color:var(--g)">Conectada: ${esc(st.nombre)}</span>` : st.estado === 'pedir' ? `<span style="color:var(--warn)">Elegida (${esc(st.nombre)}), falta dar permiso</span>` : '<span class="dim">Sin elegir</span>';
+        filas.push(`<tr><td><b style="font-weight:600">${l}</b><div class="dim" style="font-size:11px">${sub}</div></td>
+          <td>${inp('carpetas', 0, k, cfg.carpetas[k], '', 'style="min-width:340px"')}</td><td>${est}</td>
+          <td><div style="display:flex;gap:6px"><button type="button" class="btn sm" data-act="elegir" data-k="${k}">Elegir carpeta</button>${st.estado === 'pedir' ? `<button type="button" class="btn sm" data-act="permiso" data-k="${k}">Dar permiso</button>` : ''}</div></td></tr>`);
+      }
+      cuerpo = `<table class="t cfg"><thead><tr><th>CARPETA</th><th>RUTA EN ONEDRIVE (REFERENCIA)</th><th>ESTADO</th><th></th></tr></thead><tbody>${filas.join('')}</tbody></table>
+        <div class="stack" style="padding:14px 18px">
+          <label class="chk"><input type="checkbox" data-act="copiarCrudos" ${cfg.carpetas.copiarCrudos ? 'checked' : ''}> Al guardar en historial, copiar los crudos a Backup\\Crudos\\&lt;fecha&gt;</label>
+          ${!K.soporta() ? '<div class="info warn">Este navegador no permite elegir carpetas. Usa Chrome o Edge en la PC; mientras tanto, los reportes se descargan.</div>' : ''}
+          ${K.embebida ? '<div class="info warn">La app está abierta dentro del Centro de Control. Los navegadores no dejan elegir carpetas dentro de un marco: abre la app en su propia pestaña para conectar Hx y Backup.</div>' : ''}
+          <div class="dim" style="font-size:12px;line-height:1.5">Al elegir, navega hasta la carpeta indicada. El navegador no deja leer la ruta completa; el texto de la izquierda es solo de referencia.</div>
+        </div>`;
+    }
+    v.innerHTML = `
+      <div class="bar">
+        <div class="seg" role="tablist" aria-label="Secciones">${secs.map(([k, l]) => `<button type="button" data-act="sec" data-v="${k}" class="${s === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <div class="right">
+          <button type="button" class="btn" data-act="respaldar">${ico.save} Respaldar en Backup</button>
+          <button type="button" class="btn" data-act="importar">Importar respaldo</button>
+          <button type="button" class="btn ghost" data-act="iniciales">Valores iniciales</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="hd"><h3>${titulo}</h3><span class="note">${ayuda}</span>
+          ${agregar ? `<button type="button" class="btn sm" data-act="agregar" style="margin-left:auto;color:var(--g)">+ Agregar fila</button>` : ''}</div>
+        <div class="tw">${cuerpo}</div>
+      </div>
+      <p class="dim" style="font-size:12px;margin:10px 4px">Los cambios se guardan solos en este navegador.</p>`;
+  }
+
+  const nuevos = {
+    rutas: () => ({ ruta: '', nombreSistema: '', nombreImagen: '', turno: 'auto', enImagen: true }),
+    claves: () => ({ codigo: '', descripcion: '', parrilla: '', bolsa: '', enImagen: true }),
+    cadenas: () => ({ nombre: 'Nueva cadena', claves: '', esSuper: true }),
+    verificadoras: () => ({ codigo: '', nombre: '', activa: true })
+  };
+
+  async function respaldar() {
+    const nombre = 'config_' + hoyTxt() + '.json';
+    const datos = JSON.stringify(cfg, null, 2);
+    try {
+      const bk = await K.obtener('backup');
+      if (bk) { const d = await K.subcarpeta(bk, 'Config'); await K.escribir(d, nombre, datos); toast('Respaldo guardado en Backup\\Config\\' + nombre, 'ok'); return; }
+    } catch (_) {}
+    K.descargar(nombre, datos, 'application/json');
+    toast('Respaldo descargado (elige la carpeta Backup para guardarlo directo).');
+  }
+
+  /* ---------- navegación y eventos ---------- */
+  function irA(t) {
+    S.tab = t;
+    $$('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+    $$('.view').forEach((v) => v.classList.toggle('on', v.id === 'v-' + t));
+    pintar();
+  }
+  function pintar() {
+    ({ resumen: vResumen, cadenas: vCadenas, cambios: vCambios, verif: vVerif, hist: vHist, config: vConfig })[S.tab]();
+  }
+
+  async function onClick(e) {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const a = b.dataset.act;
+    try {
+      switch (a) {
+        case 'abrir': $('#fileInput').click(); break;
+        case 'solo': S.solo = b.dataset.v === '1'; vResumen(); break;
+        case 'turno': S.turno = b.dataset.v; vResumen(); break;
+        case 'copiar':
+          if (!S.canvas) return toast('No hay imagen para copiar.', 'bad');
+          await IMG.copiar(S.canvas); toast('Imagen copiada. Pégala en WhatsApp con Ctrl+V.', 'ok'); break;
+        case 'descargar':
+          if (!S.canvas) return toast('No hay imagen.', 'bad');
+          await IMG.descargar(S.canvas, 'Resumen ' + S.turno + ' ' + S.res.fecha + '.jpg'); break;
+        case 'historial': await guardarHistorial(); break;
+        case 'agregarNuevas': {
+          const d = C.deteccion(S.est, cfg);
+          d.nuevas.forEach((r) => cfg.rutas.push({ ruta: r.ruta, nombreSistema: r.nombre, nombreImagen: '', turno: 'auto', enImagen: false }));
+          guardarCfg(); vResumen(); toast('Rutas agregadas en Configuración, fuera de la imagen.', 'ok'); break;
+        }
+        case 'vista': S.cad.vista = b.dataset.v; if (b.dataset.v === 'tienda' && S.cad.cadena === '*') S.cad.cadena = (cfg.cadenas[0] || {}).nombre || '*'; vCadenas(); break;
+        case 'expCad': {
+          const f = S.cad, m = S.matriz;
+          const base = f.vista === 'cadena' ? 'Cadenas x Clave' : 'Tiendas x Clave ' + (f.cadena === '*' ? 'todas' : f.cadena);
+          await exportar('Cadenas', base + ' ' + S.est.corteDia + ' ' + f.carga + '.xlsx', [{ nombre: f.vista === 'cadena' ? 'Cadena x Clave' : 'Tienda x Clave', aoa: aoaMatriz(m, f.vista === 'cadena' ? 'Cadena' : 'Tienda') }]);
+          break;
+        }
+        case 'cCarga': S.camb.carga = b.dataset.v; vCambios(); break;
+        case 'expCamb': {
+          const r = S.cambiosR;
+          await exportar('Cambios', 'Cambios ' + S.est.corteDia + ' ' + S.camb.carga + '.xlsx', [
+            { nombre: 'Por clave', aoa: [['Clave', 'Cambios', 'Normal', '%']].concat(r.porClave.map((x) => [x.codigo, x.u, x.normal, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', r.total, r.porClave.reduce((s, x) => s + x.normal, 0), '']]) },
+            { nombre: 'Por ruta', aoa: [['Ruta', 'Nombre', 'Cambios', 'Clientes', '% de su venta']].concat(r.porRuta.map((x) => [x.ruta, x.nombre, x.u, x.clientes, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', '', r.total, r.clientes, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
+            { nombre: 'Por cliente', aoa: [['Cliente', 'Cadena', 'Ruta', 'Nombre ruta', 'Cambios']].concat(r.porCliente.map((x) => [x.cliente, x.cadena, x.ruta, x.rutaNombre, x.u])).concat([['Total', '', '', '', r.total]]) }
+          ]);
+          break;
+        }
+        case 'verJ': S.verJ = b.dataset.v; vVerif(); break;
+        case 'expVer': {
+          const r = S.verifR;
+          await exportar('Verificacion', 'Verificacion ' + r.dia + '.xlsx', [{ nombre: 'Verificadoras', aoa: [['Código', 'Nombre', 'Vales', 'Líneas', 'Unidades', 'Rutas', 'Inicio', 'Fin', 'Líneas por hora']]
+            .concat(r.filas.map((f) => [f.codigo, f.nombre, f.vales, f.lineas, f.u, f.rutas, C.hora(f.ini), C.hora(f.fin), f.lph ?? ''])).concat([['Total', '', r.tot.vales, r.tot.lineas, r.tot.u, '', C.hora(r.ini), C.hora(r.fin), '']]) }]);
+          break;
+        }
+        case 'irCarpetas': S.cfgSec = 'carpetas'; irA('config'); break;
+        case 'leerHist': S.hist.fotos = null; if (await leerHistorial(true)) vHist(); else toast('No se dio permiso a la carpeta Hx.', 'bad'); break;
+        case 'expPron': {
+          const pr = S.pron; if (!pr || !pr.filas.length) return toast('No hay pronóstico para exportar.', 'bad');
+          await exportar('Pronostico', 'Pronostico ' + ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][S.hist.dow] + ' ' + S.hist.fTurno + ' ' + hoyTxt() + '.xlsx', [{ nombre: 'Pronóstico', aoa: [['Clave', 'Promedio', 'Último', 'Tendencia %', 'Parrillas'].concat(pr.fechas)]
+            .concat(pr.filas.map((x) => [x.codigo, x.prom, x.ult, x.tend == null ? '' : Math.round(x.tend), x.parrillas ?? ''].concat(x.serie))) }]);
+          break;
+        }
+        case 'sec': S.cfgSec = b.dataset.v; vConfig(); break;
+        case 'toggle': { const o = cfg[b.dataset.sec][+b.dataset.i]; o[b.dataset.k] = !o[b.dataset.k]; guardarCfg(); b.setAttribute('aria-checked', o[b.dataset.k] ? 'true' : 'false'); break; }
+        case 'mover': {
+          const arr = cfg[b.dataset.sec], i = +b.dataset.i, j = i + (+b.dataset.d);
+          if (j < 0 || j >= arr.length) return;
+          [arr[i], arr[j]] = [arr[j], arr[i]]; guardarCfg(); vConfig(); break;
+        }
+        case 'borrar': {
+          const arr = cfg[b.dataset.sec], o = arr[+b.dataset.i];
+          const nm = o.ruta || o.codigo || o.nombre || 'esta fila';
+          if (!confirm('¿Quitar ' + nm + '?')) return;
+          arr.splice(+b.dataset.i, 1); guardarCfg(); vConfig(); break;
+        }
+        case 'agregar': cfg[S.cfgSec].push(nuevos[S.cfgSec]()); guardarCfg(false); await vConfig(); { const ins = $$('#v-config tbody tr:last-child input[type=text]'); if (ins[0]) ins[0].focus(); } break;
+        case 'agregarVerif': {
+          const conocidos = new Set(cfg.verificadoras.map((x) => x.codigo));
+          [...new Set(S.est.lineas.map((l) => l.verifUsuario).filter(Boolean))].filter((c) => !conocidos.has(c)).sort()
+            .forEach((c) => cfg.verificadoras.push({ codigo: c, nombre: 'Usuario ' + c, activa: true }));
+          guardarCfg(); vConfig(); break;
+        }
+        case 'elegir': await K.elegir(b.dataset.k); S.hist.fotos = null; toast('Carpeta conectada.', 'ok'); vConfig(); break;
+        case 'permiso': await K.obtener(b.dataset.k, true); vConfig(); break;
+        case 'copiarCrudos': cfg.carpetas.copiarCrudos = b.checked; guardarCfg(false); break;
+        case 'respaldar': await respaldar(); break;
+        case 'importar': $('#cfgInput').click(); break;
+        case 'iniciales':
+          if (!confirm('¿Volver a la configuración inicial? Se pierden rutas, claves, cadenas y nombres que hayas cambiado. (Respalda antes si lo necesitas.)')) return;
+          { const carpetas = cfg.carpetas; cfg = window.Config.inicial(); cfg.carpetas = carpetas; }
+          guardarCfg(); vConfig(); toast('Configuración inicial restaurada.', 'ok'); break;
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      console.error(err); toast(err.message || String(err), 'bad');
+    }
+  }
+
+  function onChange(e) {
+    const t = e.target;
+    if (t.matches('#v-cadenas [data-f]')) {
+      const k = t.dataset.f; S.cad[k] = t.type === 'checkbox' ? t.checked : t.value;
+      if (k === 'otros' && !t.checked && S.cad.cadena === 'Otros clientes') S.cad.cadena = '*';
+      vCadenas(); return;
+    }
+    if (t.matches('#v-hist [data-h]')) {
+      const k = t.dataset.h; S.hist[k] = t.type === 'checkbox' ? t.checked : t.value; vHist(); return;
+    }
+    if (t.matches('#v-config [data-sec][data-k]')) {
+      const sec = t.dataset.sec, k = t.dataset.k;
+      let val = t.value;
+      if (sec === 'carpetas') { cfg.carpetas[k] = val; guardarCfg(false); return; }
+      if (k === 'ruta' || k === 'codigo') val = val.trim();
+      if (sec === 'verificadoras' && k === 'codigo' && /^\d+$/.test(val)) { val = val.padStart(4, '0'); t.value = val; }
+      cfg[sec][+t.dataset.i][k] = val;
+      guardarCfg(sec === 'cadenas' || sec === 'rutas');
+    }
+  }
+
+  async function importarCfg(file) {
+    try {
+      const nuevo = window.Config.completar(JSON.parse(await file.text()));
+      if (!confirm('¿Reemplazar la configuración actual con "' + file.name + '"?')) return;
+      cfg = nuevo; guardarCfg(); vConfig(); toast('Configuración importada.', 'ok');
+    } catch (e) { toast('No pude leer ese respaldo: ' + e.message, 'bad'); }
+  }
+
+  function iniciar() {
+    $('#ver').textContent = VERSION;
+    $$('.tabs button').forEach((b) => b.addEventListener('click', () => irA(b.dataset.tab)));
+    $('#btnReiniciar').addEventListener('click', reiniciar);
+    $('#app').addEventListener('click', onClick);
+    $('#app').addEventListener('change', onChange);
+    $('#fileInput').addEventListener('change', (e) => { cargarArchivos(e.target.files); e.target.value = ''; });
+    $('#cfgInput').addEventListener('change', (e) => { if (e.target.files[0]) importarCfg(e.target.files[0]); e.target.value = ''; });
+    // Arrastrar y soltar en cualquier parte de la app
+    let cnt = 0;
+    window.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { cnt++; const z = $('#dropZone'); if (z) z.classList.add('over'); } });
+    window.addEventListener('dragleave', () => { cnt = Math.max(0, cnt - 1); if (!cnt) { const z = $('#dropZone'); if (z) z.classList.remove('over'); } });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+      e.preventDefault(); cnt = 0; const z = $('#dropZone'); if (z) z.classList.remove('over');
+      if (e.dataTransfer && e.dataTransfer.files.length) { if (S.tab !== 'resumen') irA('resumen'); cargarArchivos(e.dataTransfer.files); }
+    });
+    pintar();
+  }
+  iniciar();
+})();
