@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.2';
+  const VERSION = 'V.3';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -55,6 +55,21 @@
     S.est = C.clasificar(S.archivos, cfg);
     S.turno = S.est.hayAM ? 'AM' : 'PM';
     pintar();
+    avisarCentro();
+  }
+
+  /* Resumen del día para la tarjeta del Centro de Control ({ v, app, actualizado, datos }).
+     Desde /apps/rutas/ (mismo sitio) va en localStorage; además se manda por postMessage. */
+  let ultimoInsight = null;
+  function avisarCentro() {
+    const E = S.est; if (!E) return;
+    const tot = (t) => { const r = C.resumen(E, cfg, t, false); return r.filas.length ? { fecha: r.fecha, rutas: r.filas.length, unidades: r.totales.reduce((a, b) => a + b, 0) } : null; };
+    const d = C.deteccion(E, cfg);
+    ultimoInsight = { v: 1, app: 'rutas', actualizado: new Date().toISOString(), datos: {
+      corteDia: E.corteDia, corteHora: C.hora(E.corteMin), am: E.hayAM ? tot('AM') : null, pm: E.hayPM ? tot('PM') : null,
+      cambios: C.cambios(E, cfg, 'Todo').total, sinVerif: d.sinVerifLineas } };
+    try { localStorage.setItem('cc.insight.rutas', JSON.stringify(ultimoInsight)); } catch (_) {}
+    try { if (window.parent !== window) window.parent.postMessage({ tipo: 'cc:insight', id: 'rutas', insight: ultimoInsight }, '*'); } catch (_) {}
   }
   function reiniciar() {
     S.archivos = []; S.est = null; S.canvas = null; S.turno = 'AM';
@@ -661,6 +676,9 @@
   function iniciar() {
     $('#ver').textContent = VERSION;
     instalacion();
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.tipo === 'cc:resumen' && ultimoInsight) { try { e.source.postMessage({ tipo: 'cc:insight', id: 'rutas', insight: ultimoInsight }, '*'); } catch (_) {} }
+    });
     $$('.tabs button').forEach((b) => b.addEventListener('click', () => irA(b.dataset.tab)));
     $('#btnReiniciar').addEventListener('click', reiniciar);
     $('#app').addEventListener('click', onClick);
