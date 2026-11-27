@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.8';
+  const VERSION = 'V.9';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -53,22 +53,49 @@
   async function cargarArchivos(lista) {
     const files = [...lista].filter((f) => /\.xls[xm]?$/i.test(f.name));
     if (!files.length) { toast('Elige archivos de Excel del sistema (.xlsx).', 'bad'); return; }
+    const msgs = [];
     for (const f of files) {
       try {
         const a = C.leerLibro(new Uint8Array(await f.arrayBuffer()), f.name, window.XLSX);
-        a.file = f;
+        a.file = f; a.cargado = Date.now(); a.generado = f.lastModified || null;
+        /* Un crudo nuevo reemplaza al que tenga la misma fecha (o el mismo nombre). */
+        const viejo = S.archivos.find((x) => x.fecha === a.fecha || x.nombre === a.nombre);
         S.archivos = S.archivos.filter((x) => x.fecha !== a.fecha && x.nombre !== a.nombre).concat(a).sort((x, y) => x.fecha.localeCompare(y.fecha));
+        const uN = ultimoMov(a), uV = viejo ? ultimoMov(viejo) : null;
+        if (viejo) {
+          const igual = uV && uN.d === uV.d && uN.m === uV.m && viejo.lineas.length === a.lineas.length;
+          msgs.push(`Crudo del ${fechaTxt(a.fecha)} reemplazado: ${viejo.lineas.length} → ${a.lineas.length} líneas, último movimiento ${C.hora(uV ? uV.m : 0)} → ${C.hora(uN.m)}${igual ? '. Trae los mismos datos que el anterior.' : '.'}`);
+        } else msgs.push(`Cargado el crudo del ${fechaTxt(a.fecha)}: ${a.lineas.length} líneas, último movimiento ${C.hora(uN.m)}.`);
       } catch (e) { toast(e.message, 'bad'); }
     }
+    if (msgs.length) setTimeout(() => toast(msgs.join(' '), 'ok'), 50);
     if (!S.archivos.length) return;
     S.est = C.clasificar(S.archivos, cfg);
     S.turno = S.est.hayAM ? 'AM' : 'PM';
     // Después de la 1 de la tarde lo normal es que sea el cierre del día.
-    S.modo = S.est.corteMin >= 13 * 60 ? 'cierre' : 'whatsapp';
+    // (o si el crudo de hoy se generó después de esa hora, aunque su último movimiento sea de antes).
+    const genHoy = Math.max(0, ...S.archivos.filter((x) => x.fecha === S.est.corteDia).map((x) => x.generado || 0));
+    const tarde = genHoy && diaDe(genHoy) === S.est.corteDia && new Date(genHoy).getHours() >= 13;
+    S.modo = S.est.corteMin >= 13 * 60 || tarde ? 'cierre' : 'whatsapp';
     S.fuente = 'vivo';
     pintar();
     avisarCentro();
     guardarSesion();
+  }
+
+  /** Último Fecha Grabado / Verificado Fecha del crudo (no es la hora en que se generó el archivo). */
+  function ultimoMov(a) {
+    return a.lineas.reduce((m, l) => { for (const f of [l.grabado, l.verif]) if (f && (f.d > m.d || (f.d === m.d && f.m > m.m))) m = f; return m; }, { d: '', m: 0 });
+  }
+  const horaDe = (ms) => ms ? new Date(ms).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' }) : '';
+  const diaDe = (ms) => { if (!ms) return ''; const d = new Date(ms), p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+  function quitarArchivo(i) {
+    const a = S.archivos[i]; if (!a) return;
+    S.archivos.splice(i, 1);
+    S.est = S.archivos.length ? C.clasificar(S.archivos, cfg) : null;
+    S.cierres.cache = {};
+    guardarSesion(); pintar(); avisarCentro();
+    toast('Quitado: ' + a.nombre);
   }
 
   /* ---------- sesión: lo último cargado sigue ahí al volver a abrir la app ---------- */
@@ -77,7 +104,7 @@
   async function guardarSesion() {
     try {
       const db = await sesDB();
-      const datos = S.archivos.length ? { archivos: S.archivos.map((a) => ({ nombre: a.nombre, fecha: a.fecha, lineas: a.lineas.map((l) => { const o = Object.assign({}, l); delete o.cad; return o; }), file: a.file || null })), modo: S.modo, solo: S.solo, guardado: Date.now() } : null;
+      const datos = S.archivos.length ? { archivos: S.archivos.map((a) => ({ nombre: a.nombre, fecha: a.fecha, cargado: a.cargado || null, generado: a.generado || (a.file && a.file.lastModified) || null, lineas: a.lineas.map((l) => { const o = Object.assign({}, l); delete o.cad; return o; }), file: a.file || null })), modo: S.modo, solo: S.solo, guardado: Date.now() } : null;
       await new Promise((ok) => { const t = db.transaction('s', 'readwrite'); datos ? t.objectStore('s').put(datos, 'vivo') : t.objectStore('s').delete('vivo'); t.oncomplete = ok; t.onerror = ok; });
     } catch (_) { /* sin IndexedDB solo se pierde la sesión */ }
   }
@@ -130,7 +157,15 @@
     const dir = await dirCierres(true).catch(() => null);
     if (!dir) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); S.cfgSec = 'carpetas'; irA('config'); return; }
     const d = C.deteccion(E, cfg), avisos = [];
-    if (E.corteMin < 13 * 60) avisos.push('Los crudos son de las ' + C.hora(E.corteMin) + ': ¿seguro que ya cerró la operación?');
+    /* La hora que importa es cuándo se generó el crudo de hoy, no su último movimiento. */
+    const deHoy = S.archivos.filter((a) => a.fecha === E.corteDia);
+    const gen = Math.max(0, ...deHoy.map((a) => a.generado || (a.file && a.file.lastModified) || 0));
+    const genMin = gen && diaDe(gen) === E.corteDia ? new Date(gen).getHours() * 60 + new Date(gen).getMinutes() : null;
+    if (genMin != null ? genMin < 13 * 60 : E.corteMin < 13 * 60) {
+      avisos.push(genMin != null
+        ? 'El crudo de hoy se generó a las ' + horaDe(gen) + ': ¿seguro que ya cerró la operación?'
+        : 'El último movimiento de los crudos es de las ' + C.hora(E.corteMin) + ' y no sé a qué hora se generaron: ¿es el crudo del cierre?');
+    }
     if (!E.hayPM) avisos.push('No cargaste el crudo de mañana: las cargas de la tarde no quedarán en el cierre.');
     if (d.sinVerifLineas) avisos.push(d.sinVerifLineas + ' líneas sin verificar (rutas ' + d.sinVerifRutas.join(', ') + ').');
     if (avisos.length && !confirm('Antes de guardar el cierre del ' + fechaTxt(E.corteDia) + ':\n\n• ' + avisos.join('\n• ') + '\n\n¿Guardar de todos modos?')) return;
@@ -210,13 +245,19 @@
     if (E.hayAM) tabs.push(['AM', 'Rutas AM · ' + fechaTxt(E.amFecha)]);
     if (E.hayPM) tabs.push(['PM', 'Rutas PM · ' + fechaTxt(E.pmFecha)]);
     if (!tabs.some((t) => t[0] === S.turno) && tabs.length) S.turno = tabs[0][0];
-    const archivos = S.archivos.map((a) => {
+    const archivos = S.archivos.map((a, i) => {
       const esPM = a.fecha > E.corteDia;
-      const ult = a.lineas.reduce((m, l) => { for (const f of [l.grabado, l.verif]) if (f && (f.d > m.d || (f.d === m.d && f.m > m.m))) m = f; return m; }, { d: '', m: 0 });
+      const ult = ultimoMov(a), gen = a.generado || (a.file && a.file.lastModified);
       return `<div class="file">${ico.file}<div style="min-width:0;flex:1">
         <div class="tag">${esPM ? 'MAÑANA · RUTAS PM' : a.fecha === E.corteDia ? 'HOY · RUTAS AM' : 'FECHA ANTERIOR'}</div>
         <div class="nm">${esc(a.nombre)}</div>
-        <div class="mt">Fecha ${esc(fechaTxt(a.fecha))} · ${n0(a.lineas.length)} líneas · último movimiento ${C.hora(ult.m)}</div></div></div>`;
+        <table class="fmeta"><tbody>
+          <tr><td>Fecha del crudo</td><td>${esc(fechaTxt(a.fecha))} · ${n0(a.lineas.length)} líneas</td></tr>
+          <tr><td>Generado</td><td>${gen ? esc((diaDe(gen) !== diaDe(Date.now()) ? fechaTxt(diaDe(gen)) + ' ' : '') + horaDe(gen)) : '—'}</td></tr>
+          <tr><td>Cargado aquí</td><td>${a.cargado ? esc(horaDe(a.cargado)) : 'sesión anterior'}</td></tr>
+          <tr><td title="Último Fecha Grabado o Verificado Fecha que trae el crudo">Último movimiento</td><td>${C.hora(ult.m)}</td></tr>
+        </tbody></table></div>
+        <button type="button" class="btn sm ghost" data-act="quitarArchivo" data-v="${i}" title="Quitar este archivo" aria-label="Quitar ${esc(a.nombre)}">✕</button></div>`;
     }).join('');
     const det = [
       ['Rutas AM en la imagen', d.amRutas, 'var(--g)'],
@@ -234,7 +275,8 @@
       <div class="row">
         <aside class="side">
           <div class="card pad stack">
-            <h2>Archivos del sistema</h2>
+            <div style="display:flex;align-items:center;gap:8px"><h2 style="flex:1">Archivos del sistema</h2>
+              <button type="button" class="btn sm ghost" data-act="limpiarArchivos" title="Quita todos los crudos cargados">Limpiar</button></div>
             ${archivos}
             <button type="button" class="drop" data-act="abrir" id="dropZone">Arrastra otro crudo aquí o haz clic para buscarlo</button>
           </div>
@@ -783,6 +825,8 @@
     try {
       switch (a) {
         case 'abrir': $('#fileInput').click(); break;
+        case 'quitarArchivo': quitarArchivo(Number(b.dataset.v)); break;
+        case 'limpiarArchivos': if (confirm('¿Quitar todos los crudos cargados? No borra ningún cierre guardado.')) reiniciar(); break;
         case 'solo': S.solo = b.dataset.v === '1'; vResumen(); break;
         case 'turno': S.turno = b.dataset.v; vResumen(); break;
         case 'whatsapp': {

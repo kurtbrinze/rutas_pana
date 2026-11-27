@@ -175,3 +175,7 @@ table.t td{height:var(--rz-fila,44px)}
 .msel.act>.btn{background:var(--rz-act,#262A32);border-color:var(--rz-act-ind,#E5E7EB)}
 .toast.bad{color:var(--bad)}
 .toast.ok{border-color:var(--rz-ok-borde)}
+
+.fmeta{border-collapse:collapse;margin-top:6px;font-size:12px;width:100%}
+.fmeta td{padding:2px 0;color:var(--tx2);font-variant-numeric:tabular-nums}
+.fmeta td:first-child{color:var(--tx3);padding-right:10px;white-space:nowrap;width:1%}
