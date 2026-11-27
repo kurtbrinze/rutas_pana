@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.9';
+  const VERSION = 'V.10';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -43,7 +43,7 @@
   }
   function guardarCfg(recalcular = true) {
     window.Config.guardar(cfg);
-    if (recalcular && S.archivos.length) S.est = C.clasificar(S.archivos, cfg);
+    if (recalcular && S.archivos.length) { S.est = C.clasificar(S.archivos, cfg); marcarYaGuardadas(false).then((n) => { if (n) pintar(); }); }
     if (recalcular) S.cierres.cache = {};
   }
   const fechaTxt = (d) => C.fechaCorta(d);
@@ -70,7 +70,7 @@
     }
     if (msgs.length) setTimeout(() => toast(msgs.join(' '), 'ok'), 50);
     if (!S.archivos.length) return;
-    S.est = C.clasificar(S.archivos, cfg);
+    await reclasificar(false);
     S.turno = S.est.hayAM ? 'AM' : 'PM';
     // Después de la 1 de la tarde lo normal es que sea el cierre del día.
     // (o si el crudo de hoy se generó después de esa hora, aunque su último movimiento sea de antes).
@@ -92,9 +92,8 @@
   function quitarArchivo(i) {
     const a = S.archivos[i]; if (!a) return;
     S.archivos.splice(i, 1);
-    S.est = S.archivos.length ? C.clasificar(S.archivos, cfg) : null;
     S.cierres.cache = {};
-    guardarSesion(); pintar(); avisarCentro();
+    reclasificar(false).then(() => { guardarSesion(); pintar(); avisarCentro(); });
     toast('Quitado: ' + a.nombre);
   }
 
@@ -152,10 +151,51 @@
     return ind;
   }
 
+  /* ---------- sin duplicados con el cierre anterior ----------
+     Una carga de la tarde que entró como PM en el cierre de ayer puede venir
+     otra vez hoy como AM si la verificaron hoy. Se compara con las líneas PM
+     guardadas ayer (fecha, ruta, vale, cliente, código, cantidad y tipo) y
+     las que ya están ahí se marcan como «cargadas ayer en la tarde». */
+  const claveLinea = (f) => [f.fecha, f.ruta, f.vale, f.cliente, f.codigo, f.cantidad, f.tipo].map((v) => String(v ?? '')).join('|');
+  async function marcarYaGuardadas(pedir) {
+    const E = S.est; if (!E || E.fuente === 'cierre') return 0;
+    let dir = null, L = null;
+    try { dir = await dirCierres(pedir); L = dir ? await listarCierres(pedir) : null; } catch (_) { return 0; }
+    const prev = (L || []).filter((d) => d < E.corteDia).pop();
+    if (!prev) { E.cierrePrevio = null; return 0; }
+    let f; try { f = await K.leerJSON(dir, prev + '.json'); } catch (_) { return 0; }
+    const ix = {}; (f.campos || []).forEach((k, i) => { ix[k] = i; });
+    const cuenta = new Map();
+    (f.lineas || []).forEach((r) => {
+      if (r[ix.clase] !== 'PM' || r[ix.fecha] !== E.corteDia) return;
+      const k = claveLinea({ fecha: r[ix.fecha], ruta: r[ix.ruta], vale: r[ix.vale], cliente: r[ix.cliente], codigo: r[ix.codigo], cantidad: r[ix.cantidad], tipo: r[ix.tipo] });
+      cuenta.set(k, (cuenta.get(k) || 0) + 1);
+    });
+    let n = 0;
+    E.lineas.forEach((l) => {
+      if (l.clase !== 'AM') return;
+      const k = claveLinea(l), c = cuenta.get(k);
+      if (c) { l.clase = 'AYER'; l.yaGuardada = true; cuenta.set(k, c - 1); n++; }
+    });
+    E.hayAM = E.lineas.some((l) => l.clase === 'AM');
+    E.cierrePrevio = prev; E.yaGuardadas = n;
+    return n;
+  }
+  /* Reclasifica los crudos y quita lo que ya quedó en el cierre anterior. */
+  async function reclasificar(pedir) {
+    if (!S.archivos.length) { S.est = null; return; }
+    S.est = C.clasificar(S.archivos, cfg);
+    const n = await marcarYaGuardadas(pedir);
+    if (n) toast(n + ' líneas ya estaban como PM en el cierre del ' + fechaTxt(S.est.cierrePrevio) + ': no se cuentan otra vez.', 'ok');
+    return n;
+  }
+
   async function guardarCierre() {
     const E = S.est; if (!E) return;
     const dir = await dirCierres(true).catch(() => null);
     if (!dir) { toast('Primero elige la carpeta Hx en Configuración › Carpetas.', 'bad'); S.cfgSec = 'carpetas'; irA('config'); return; }
+    /* Antes de guardar se revisa contra el cierre anterior (con permiso a Hx). */
+    if (E.cierrePrevio === undefined) await marcarYaGuardadas(true);
     const d = C.deteccion(E, cfg), avisos = [];
     /* La hora que importa es cuándo se generó el crudo de hoy, no su último movimiento. */
     const deHoy = S.archivos.filter((a) => a.fecha === E.corteDia);
@@ -263,6 +303,7 @@
       ['Rutas AM en la imagen', d.amRutas, 'var(--g)'],
       ['Rutas PM en la imagen', d.pmRutas, 'var(--g)'],
       ['Cargadas ayer en la tarde (no se reportan)', d.ayerRutas, 'var(--tx2)'],
+      ...(E.cierrePrevio ? [['Líneas que ya estaban en el cierre del ' + fechaTxt(E.cierrePrevio), E.yaGuardadas || 0, 'var(--tx2)']] : []),
       ['Rutas fuera de la imagen (Configuración)', d.fueraRutas, 'var(--tx2)'],
       ['Líneas AM sin verificar', d.sinVerifLineas, d.sinVerifLineas ? 'var(--warn)' : 'var(--tx2)']
     ].map(([l, n, c]) => `<div class="det"><span>${l}</span><b style="color:${c}">${n}</b></div>`).join('');
@@ -1008,6 +1049,7 @@
       S.est = C.clasificar(S.archivos, cfg);
       S.turno = S.est.hayAM ? 'AM' : 'PM';
       pintar(); avisarCentro();
+      marcarYaGuardadas(false).then((n) => { if (n) { pintar(); avisarCentro(); } });
       toast('Se recuperaron los crudos del ' + fechaTxt(S.est.corteDia) + ' ' + C.hora(S.est.corteMin) + '.');
     });
     window.addEventListener('message', (e) => {
