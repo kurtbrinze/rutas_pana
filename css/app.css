@@ -1,9 +1,10 @@
 /* Rinze Studio · Resumen Rutas Supermercados */
 :root{
-  --bg:#0A0E17; --s1:#121824; --s2:#1E293B; --line:#253248; --line2:#334155;
-  --tx:#E6EDF6; --tx2:#94A3B8; --tx3:#64748B;
-  --g:#00FF88; --c:#00D2FE; --warn:#FBBF24; --bad:#F87171;
-  --grad:linear-gradient(135deg,#00FF88,#00D2FE);
+  /* Tema global Rinze (Grafito & Plata); los valores de respaldo son los mismos. */
+  --bg:var(--rz-bg,#0D0F12); --s1:var(--rz-card,#16191E); --s2:var(--rz-elev,#1F232B); --line:var(--rz-card-borde,#262A32); --line2:var(--rz-elev-borde,#323741);
+  --tx:var(--rz-tx,#F3F4F6); --tx2:var(--rz-tx2,#9CA3AF); --tx3:var(--rz-tx3,#6B7280);
+  --g:var(--rz-act-ind,#E5E7EB); --c:var(--rz-link,#D1D5DB); --warn:var(--rz-warn,#FBBF24); --bad:var(--rz-crit,#F87171); --ok:var(--rz-ok,#4ADE80);
+  --grad:var(--rz-pri,#F3F4F6);
   --mono:'JetBrains Mono',ui-monospace,monospace;
 }
 *{box-sizing:border-box}
@@ -34,7 +35,7 @@ svg.i.sm{width:16px;height:16px}
 /* Botones y controles */
 .btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line2);background:var(--s1);color:var(--tx);font-size:13px;font-weight:500;white-space:nowrap}
 .btn:hover{background:var(--s2)}
-.btn.pri{border:0;background:var(--grad);color:#04120B;font-weight:600}
+.btn.pri{border:0;background:var(--grad);color:var(--rz-pri-tx,#0D0F12);font-weight:600}
 .btn.pri:hover{filter:brightness(1.08)}
 .btn.ghost{background:transparent;color:var(--tx2)}
 .btn.sm{height:32px;padding:0 10px;font-size:12px;border-radius:8px}
@@ -53,7 +54,7 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--c);outline
 .sw{position:relative;width:40px;height:22px;border-radius:999px;border:0;background:var(--line2);flex:none;padding:0}
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--tx2);transition:left .15s}
 .sw[aria-checked=true]{background:var(--g)}
-.sw[aria-checked=true]::after{left:21px;background:#04120B}
+.sw[aria-checked=true]::after{left:21px;background:var(--rz-pri-tx,#0D0F12)}
 
 /* Vistas */
 main{max-width:1520px;margin:0 auto;padding:20px 24px 40px}
@@ -146,3 +147,31 @@ table.cfg input[type=text]{width:100%;min-width:110px}
 .toast.ok{border-color:var(--g)}
 
 @media (max-width:900px){.app-name{display:none}.top{height:auto;flex-wrap:wrap;padding:10px 14px}.tabs{order:3;width:100%;margin:0}}
+
+/* ===================== Tema Rinze · Grafito & Plata =====================
+   Sólo apariencia: neutro en todo, color únicamente en estados y alertas. */
+html,body{font-family:var(--rz-font,Inter,system-ui,sans-serif)}
+table,td,th,.kpi,.chip b,.mono{font-variant-numeric:tabular-nums}
+.ver{color:var(--tx2)}
+.tabs button.on{background:var(--rz-act,#262A32);color:var(--rz-act-tx,#fff);box-shadow:inset 0 -2px 0 var(--rz-act-ind,#E5E7EB)}
+.seg button.on{box-shadow:inset 0 -2px 0 var(--rz-act-ind,#E5E7EB)}
+.card{border-radius:var(--rz-r-card,12px);box-shadow:var(--rz-sombra,none)}
+.btn{border-radius:var(--rz-r-btn,8px)}
+.btn.pri{background:var(--rz-pri,#F3F4F6);color:var(--rz-pri-tx,#0D0F12)}
+.btn.pri:hover{background:var(--rz-pri-hover,#fff);filter:none}
+input,select,textarea{border-radius:var(--rz-r-btn,8px)}
+input:focus,select:focus,button:focus-visible{outline-color:var(--rz-foco,#9CA3AF)}
+.sw[aria-checked=true]{background:var(--rz-pri,#F3F4F6)}
+.drop.over{background:rgba(229,231,235,.05)}
+.file .tag,.chip b{color:var(--tx)}
+.info{background:var(--s2);border-color:var(--line2);color:var(--tx2)}
+.info.warn{background:var(--rz-warn-bg);border-color:var(--rz-warn-borde);color:var(--warn)}
+table.t tr.tot td{background:rgba(229,231,235,.04)}
+table.t td.tc,table.t th.tc{background:rgba(229,231,235,.04);color:var(--tx)}
+table.t td{height:var(--rz-fila,44px)}
+.barra i{background:var(--tx2)}
+.tl .banda{background:rgba(156,163,175,.18)}
+.tl .marca{background:var(--tx)}
+.msel.act>.btn{background:var(--rz-act,#262A32);border-color:var(--rz-act-ind,#E5E7EB)}
+.toast.bad{color:var(--bad)}
+.toast.ok{border-color:var(--rz-ok-borde)}

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rutas Súper · Resumen Rutas Supermercados</title>
-<meta name="theme-color" content="#0A0E17">
+<meta name="theme-color" content="#0D0F12">
 <meta name="application-name" content="Rutas Súper">
 <meta name="apple-mobile-web-app-title" content="Rutas Súper">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,27 +14,29 @@
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<script>(function(){var h=document.documentElement,t='oscuro';try{if(window.top!==window.self)h.classList.add('rz-en-centro')}catch(_){h.classList.add('rz-en-centro')}try{t=localStorage.getItem('rz.tema')||t}catch(_){}try{if(window.top!==window.self)t=window.top.localStorage.getItem('rz.tema')||t}catch(_){}h.setAttribute('data-tema',t)})();</script>
+<link rel="stylesheet" href="https://centrocontrolpana.vercel.app/tema/rinze-tema.css">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Carlito:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <defs><linearGradient id="gr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00FF88"/><stop offset="1" stop-color="#00D2FE"/></linearGradient></defs>
+  <defs><linearGradient id="gr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--rz-logo-2,#9CA3AF)"/><stop offset="1" style="stop-color:var(--rz-logo-2,#9CA3AF)"/></linearGradient></defs>
 </svg>
 
 <header class="top">
-  <div class="brand">
+  <div class="brand rz-solo-fuera">
     <svg viewBox="0 0 40 40" width="30" height="30" aria-hidden="true">
-      <rect x="1" y="1" width="38" height="38" rx="10" fill="#0A0E17" stroke="#253248"/>
+      <rect x="1" y="1" width="38" height="38" rx="10" fill="var(--rz-bg,#0D0F12)" stroke="var(--rz-card-borde,#262A32)"/>
       <path d="M13 30V10h8.5a5.5 5.5 0 0 1 0 11H13M20 21l7 9" fill="none" stroke="url(#gr)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="13" cy="10" r="2.6" fill="#0A0E17" stroke="#00FF88" stroke-width="2"/>
-      <circle cx="13" cy="30" r="2.6" fill="#0A0E17" stroke="#00FF88" stroke-width="2"/>
-      <circle cx="27" cy="30" r="2.6" fill="#0A0E17" stroke="#00D2FE" stroke-width="2"/>
+      <circle cx="13" cy="10" r="2.6" fill="var(--rz-bg,#0D0F12)" stroke="var(--rz-logo-2,#9CA3AF)" stroke-width="2"/>
+      <circle cx="13" cy="30" r="2.6" fill="var(--rz-bg,#0D0F12)" stroke="var(--rz-logo-2,#9CA3AF)" stroke-width="2"/>
+      <circle cx="27" cy="30" r="2.6" fill="var(--rz-bg,#0D0F12)" stroke="var(--rz-logo-2,#9CA3AF)" stroke-width="2"/>
     </svg>
     <div class="wm"><b>Rinze</b><span>STUDIO</span></div>
   </div>
-  <div class="sep"></div>
-  <div class="app-name"><img src="icons/icon.svg" alt="" width="26" height="26">Resumen Rutas Supermercados</div>
+  <div class="sep rz-solo-fuera"></div>
+  <div class="app-name rz-solo-fuera"><img src="icons/icon.svg" alt="" width="26" height="26">Resumen Rutas Supermercados</div>
   <nav class="tabs" aria-label="Módulos">
     <button type="button" data-tab="resumen" class="on">Resumen</button>
     <button type="button" data-tab="cadenas">Cadenas</button>
@@ -52,7 +54,7 @@
       <svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
       Empezar de nuevo
     </button>
-    <span class="ver" id="ver"></span>
+    <span class="ver rz-solo-fuera" id="ver"></span>
   </div>
 </header>
 

@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.6';
+  const VERSION = 'V.7';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -12,7 +12,7 @@
     copy: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>',
     down: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
     save: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M12 11v5"/><path d="m9.5 13.5 2.5 2.5 2.5-2.5"/></svg>',
-    file: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="stroke:#00FF88;margin-top:2px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>',
+    file: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="stroke:var(--rz-ok,#4ADE80);margin-top:2px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>',
     up: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
     dn: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
     del: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>',
@@ -384,7 +384,7 @@
     if (!m.filas.length) return '<div class="empty">No hay líneas con estos filtros.</div>';
     const cab = `<tr><th>${primera}</th>${extra ? '<th>CADENA</th>' : ''}${m.cols.map((c) => `<th class="n">${esc(c)}</th>`).join('')}<th class="n tc">TOTAL</th></tr>`;
     const max = Math.max(1, ...m.filas.flatMap((f) => f.vals));
-    const filas = m.filas.map((f) => `<tr><td>${esc(f.nombre)}</td>${extra ? `<td class="dim">${esc(f.cadena || '')}</td>` : ''}${f.vals.map((v) => v ? `<td class="n" style="background:rgba(0,210,254,${(0.03 + 0.28 * v / max).toFixed(3)})">${n0(v)}</td>` : '<td class="n z">·</td>').join('')}<td class="n tc">${n0(f.total)}</td></tr>`).join('');
+    const filas = m.filas.map((f) => `<tr><td>${esc(f.nombre)}</td>${extra ? `<td class="dim">${esc(f.cadena || '')}</td>` : ''}${f.vals.map((v) => v ? `<td class="n" style="background:rgba(229,231,235,${(0.03 + 0.28 * v / max).toFixed(3)})">${n0(v)}</td>` : '<td class="n z">·</td>').join('')}<td class="n tc">${n0(f.total)}</td></tr>`).join('');
     const tot = `<tr class="tot"><td>Total</td>${extra ? '<td></td>' : ''}${m.totales.map((v) => `<td class="n">${n0(v)}</td>`).join('')}<td class="n tc">${n0(m.total)}</td></tr>`;
     return `<div class="tw"><table class="t"><thead>${cab}</thead><tbody>${filas}${tot}</tbody></table></div>`;
   }
@@ -523,9 +523,9 @@
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => Math.round(max * k));
     const paso = Math.max(1, Math.ceil(pts.length / 12));
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Unidades por fecha">
-      ${ticks.map((t) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="#1E293B"/><text x="${P.l - 8}" y="${y(t) + 4}" fill="#64748B" font-size="11" text-anchor="end" font-family="JetBrains Mono">${n0(t)}</text>`).join('')}
+      ${ticks.map((t) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rz-card-borde,#262A32)"/><text x="${P.l - 8}" y="${y(t) + 4}" fill="var(--rz-tx3,#6B7280)" font-size="11" text-anchor="end" font-family="JetBrains Mono">${n0(t)}</text>`).join('')}
       <polyline fill="none" stroke="url(#gr)" stroke-width="2.5" stroke-linejoin="round" points="${pts.map((p, i) => x(i) + ',' + y(p.u)).join(' ')}"/>
-      ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.u)}" r="3.5" fill="#0A0E17" stroke="#00FF88" stroke-width="2"><title>${p.fecha}: ${n0(p.u)}</title></circle>${i % paso === 0 ? `<text x="${x(i)}" y="${H - 12}" fill="#64748B" font-size="11" text-anchor="middle">${esc(C.fechaCorta(p.fecha))}</text>` : ''}`).join('')}
+      ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.u)}" r="3.5" fill="var(--rz-bg,#0D0F12)" stroke="var(--rz-tx,#F3F4F6)" stroke-width="2"><title>${p.fecha}: ${n0(p.u)}</title></circle>${i % paso === 0 ? `<text x="${x(i)}" y="${H - 12}" fill="var(--rz-tx3,#6B7280)" font-size="11" text-anchor="middle">${esc(C.fechaCorta(p.fecha))}</text>` : ''}`).join('')}
     </svg>`;
   }
   /* ---------- carga histórica ---------- */
