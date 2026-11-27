@@ -1,7 +1,7 @@
 /* Pantallas y eventos. */
 (function () {
   'use strict';
-  const VERSION = 'V.5';
+  const VERSION = 'V.6';
   const C = window.Core, K = window.Carpetas, IMG = window.Imagen;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -16,6 +16,8 @@
     up: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
     dn: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
     del: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>',
+    filtro: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 2v-8.5z"/></svg>',
+    wa: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1.3-3.9A8 8 0 1 1 8.2 19z"/><path d="M9 9.5c.3 1.8 1.7 3.6 3.6 4.5l1.2-1.1 2 .9-.4 1.6c-3.4.2-7-3.3-6.9-6.7l1.6-.4.9 2z"/></svg>',
     izq: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
     der: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
     xls: '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>'
@@ -28,6 +30,8 @@
     fuente: 'vivo', cierres: { lista: null, cache: {} },
     cad: { vista: 'cadena', cadena: '*', carga: 'Todo', tipo: 'Normal', otros: true },
     camb: { carga: 'Todo' }, verJ: 'dia', cfgSec: 'rutas',
+    // Filtros compartidos por Cadenas y Cambios (vacío = todos).
+    filtros: { rutas: new Set(), cadenas: new Set(), tiendas: new Set(), claves: new Set() }, fAbierto: null,
     hist: { indice: null, turno: 'Ambos', ruta: '*', clave: '*', soloImg: true, dow: null, fTurno: 'Ambos' }
   };
 
@@ -167,8 +171,9 @@
   }
 
   /* ---------- exportar a Excel ---------- */
-  async function exportar(sub, nombre, hojas) {
+  async function exportar(sub, nombre, hojas, filtros) {
     const wb = window.XLSX.utils.book_new();
+    if (filtros && filtros.length) hojas = hojas.concat([{ nombre: 'Filtros', aoa: [['Filtro', 'Valores']].concat(filtros) }]);
     hojas.forEach((h) => window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(h.aoa), h.nombre.slice(0, 31)));
     const datos = window.XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
     try {
@@ -262,7 +267,7 @@
             <div class="seg" role="tablist" aria-label="Turno">${tabs.map(([t, l]) => `<button type="button" role="tab" data-act="turno" data-v="${t}" class="${S.turno === t ? 'on' : ''}">${l}</button>`).join('')}</div>
             <div class="right">
               ${S.modo === 'cierre' ? `<button type="button" class="btn pri" data-act="cierre">${ico.save} Guardar cierre del ${esc(fechaTxt(E.corteDia))}</button>
-              <button type="button" class="btn" data-act="copiar">${ico.copy} Copiar imagen</button>` : `<button type="button" class="btn pri" data-act="copiar">${ico.copy} Copiar imagen para WhatsApp</button>`}
+              <button type="button" class="btn" data-act="whatsapp">${ico.wa} Enviar por WhatsApp</button>` : `<button type="button" class="btn pri" data-act="whatsapp">${ico.wa} Enviar por WhatsApp</button>`}
               <button type="button" class="btn" data-act="descargar">${ico.down} Descargar imagen</button>
             </div>
           </div>
@@ -285,6 +290,68 @@
     } else S.canvas = null;
     S.res = res;
   }
+
+  /* ---------- filtros de Cadenas y Cambios ---------- */
+  const FIL = [['rutas', 'Rutas'], ['cadenas', 'Cadenas'], ['tiendas', 'Tiendas'], ['claves', 'Ítems']];
+  const llaveDe = {
+    rutas: (l) => l.ruta,
+    cadenas: (l) => (l.cad ? l.cad.nombre : 'Otros clientes'),
+    tiendas: (l) => l.cliente || l.clienteNombre,
+    claves: (l) => l.codigo
+  };
+  const hayFiltros = () => FIL.some(([k]) => S.filtros[k].size);
+  /** Líneas que pasan los filtros (menos el indicado, para armar las opciones en cascada). */
+  function filtrarLineas(D, excepto) {
+    const F = S.filtros;
+    return D.lineas.filter((l) => FIL.every(([k]) => k === excepto || !F[k].size || F[k].has(llaveDe[k](l))));
+  }
+  const datosFiltrados = (D) => hayFiltros() ? { ...D, lineas: filtrarLineas(D) } : D;
+  function opcionesFiltro(D, k) {
+    const m = new Map();
+    filtrarLineas(D, k).forEach((l) => {
+      if (l.clase !== 'AM' && l.clase !== 'PM') return;
+      const key = llaveDe[k](l);
+      let o = m.get(key);
+      if (!o) {
+        const desc = k === 'claves' ? ((cfg.claves.find((c) => c.codigo === key) || {}).descripcion || l.descripcion || '') : '';
+        o = { key, u: 0, label: k === 'rutas' ? key + ' ' + (l.rutaNombre || '') : k === 'tiendas' ? l.clienteNombre : key,
+          sub: k === 'tiendas' ? (l.cad ? l.cad.nombre : 'Otros clientes') : desc };
+        m.set(key, o);
+      }
+      o.u += l.cantidad;
+    });
+    S.filtros[k].forEach((key) => { if (!m.has(key)) m.set(key, { key, u: 0, label: key, sub: 'sin datos este día' }); });
+    const ops = [...m.values()];
+    if (k === 'rutas') ops.sort((a, b) => a.key.localeCompare(b.key, 'es', { numeric: true }));
+    else if (k === 'cadenas') { const pos = {}; cfg.cadenas.forEach((c, i) => { pos[c.nombre] = i; }); ops.sort((a, b) => (pos[a.key] ?? 1e6) - (pos[b.key] ?? 1e6)); }
+    else if (k === 'claves') { const pos = {}; cfg.claves.forEach((c, i) => { pos[c.codigo] = i; }); ops.sort((a, b) => (pos[a.key] ?? 1e6) - (pos[b.key] ?? 1e6) || b.u - a.u); }
+    else ops.sort((a, b) => a.label.localeCompare(b.label, 'es'));
+    return ops;
+  }
+  function etiquetaFiltro(D, k, nombre) {
+    const sel = S.filtros[k];
+    if (!sel.size) return nombre + ': todas';
+    if (sel.size === 1) { const key = [...sel][0]; const o = opcionesFiltro(D, k).find((x) => x.key === key); return nombre + ': ' + (o ? (k === 'rutas' ? key : o.label) : key); }
+    return nombre + ': ' + sel.size;
+  }
+  function barraFiltros(D) {
+    const pops = FIL.map(([k, nombre]) => {
+      const abierto = S.fAbierto === k, n = S.filtros[k].size;
+      let pop = '';
+      if (abierto) {
+        const ops = opcionesFiltro(D, k);
+        pop = `<div class="pop" role="dialog" aria-label="Filtrar ${nombre.toLowerCase()}">
+          <input type="search" data-fbusca placeholder="Buscar ${nombre.toLowerCase()}…" aria-label="Buscar">
+          <div class="pacts"><button type="button" class="btn sm ghost" data-act="fLimpiar" data-k="${k}">Todas</button><button type="button" class="btn sm ghost" data-act="fVisibles" data-k="${k}">Marcar las visibles</button><button type="button" class="btn sm pri" data-act="fCerrar">Aplicar</button></div>
+          <div class="plista">${ops.map((o) => `<label class="op" data-txt="${esc((o.label + ' ' + o.sub + ' ' + o.key).toLowerCase())}"><input type="checkbox" data-fk="${k}" value="${esc(o.key)}" ${S.filtros[k].has(o.key) ? 'checked' : ''}><span class="ol">${esc(o.label)}${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</span><span class="ou">${n0(o.u)}</span></label>`).join('') || '<div class="dim" style="padding:10px">Sin opciones con los otros filtros.</div>'}</div>
+          <div class="dim" style="font-size:11px;padding:6px 10px 2px">Sin marcar ninguna = todas. Las unidades respetan los otros filtros.</div>
+        </div>`;
+      }
+      return `<div class="msel ${n ? 'act' : ''}"><button type="button" class="btn" data-act="fAbrir" data-k="${k}" aria-expanded="${abierto}">${ico.filtro} ${esc(etiquetaFiltro(D, k, nombre))} ${ico.dn}</button>${pop}</div>`;
+    }).join('');
+    return `<div class="filtros">${pops}${hayFiltros() ? `<button type="button" class="btn sm ghost" data-act="fQuitar">Quitar filtros</button>` : ''}</div>`;
+  }
+  const textoFiltros = (D) => FIL.filter(([k]) => S.filtros[k].size).map(([k, n]) => [n, [...S.filtros[k]].map((key) => { const o = opcionesFiltro(D, k).find((x) => x.key === key); return o ? o.label : key; }).join(', ')]);
 
   /* ================= CADENAS ================= */
   /** Barra para elegir de dónde salen los datos: los crudos cargados o un cierre guardado. */
@@ -323,20 +390,19 @@
   }
   function vCadenas() {
     const v = $('#v-cadenas');
-    const D = datos();
-    if (!D) { v.innerHTML = barraFuente() + sinDatos(); return; }
-    const f = S.cad;
+    const D0 = datos();
+    if (!D0) { v.innerHTML = barraFuente() + sinDatos(); return; }
+    const D = datosFiltrados(D0);
+    const f = { ...S.cad, cadena: '*' };
     const m = C.matrizCadenas(D, cfg, f);
     const kp = C.matrizCadenas(D, cfg, { ...f, vista: 'cadena', otros: false });
-    const opCad = ['*'].concat(cfg.cadenas.map((c) => c.nombre), f.otros ? ['Otros clientes'] : []);
     const cargaTxt = { Todo: 'AM + PM', AM: 'Solo AM', PM: 'Solo PM' }[f.carga];
-    v.innerHTML = barraFuente() + `
+    v.innerHTML = barraFuente() + barraFiltros(D0) + `
       <div class="bar">
         <div class="seg" role="tablist" aria-label="Vista">
           <button type="button" data-act="vista" data-v="cadena" class="${f.vista === 'cadena' ? 'on' : ''}">Cadena × Clave</button>
           <button type="button" data-act="vista" data-v="tienda" class="${f.vista === 'tienda' ? 'on' : ''}">Tienda × Clave</button>
         </div>
-        ${f.vista === 'tienda' ? `<label class="fld">Cadena<select data-f="cadena">${opCad.map((c) => `<option value="${esc(c)}" ${c === f.cadena ? 'selected' : ''}>${c === '*' ? 'Todas' : esc(c)}</option>`).join('')}</select></label>` : ''}
         <label class="fld">Carga<select data-f="carga">${[['Todo', 'AM + PM'], ['AM', 'Solo AM'], ['PM', 'Solo PM']].map(([k, l]) => `<option value="${k}" ${k === f.carga ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label class="fld">Tipo<select data-f="tipo">${['Normal', 'Cambios', 'Reposición', 'Todo'].map((t) => `<option ${t === f.tipo ? 'selected' : ''} value="${t}">${t === 'Normal' ? 'Venta normal' : t}</option>`).join('')}</select></label>
         <label class="chk" style="height:38px"><input type="checkbox" data-f="otros" ${f.otros ? 'checked' : ''}> Incluir otros clientes</label>
@@ -344,9 +410,9 @@
       </div>
       <div class="kpis">${kp.filas.map((r) => `<div class="kpi"><div class="l">${esc(r.nombre)}</div><div class="v">${n0(r.total)}</div><div class="s">${r.tiendas} tiendas</div></div>`).join('')}</div>
       <div class="card">
-        <div class="hd"><h3>${f.vista === 'cadena' ? 'Unidades por cadena y clave' : (f.cadena === '*' ? 'Todas las tiendas' : esc(f.cadena)) + ' — unidades por tienda y clave'}</h3>
+        <div class="hd"><h3>${f.vista === 'cadena' ? 'Unidades por cadena y clave' : 'Unidades por tienda y clave'}</h3>
           <span class="note">${cargaTxt} · ${f.tipo === 'Normal' ? 'venta normal' : f.tipo.toLowerCase()} · corte ${esc(fechaTxt(D.corteDia))} ${C.hora(D.corteMin)}</span></div>
-        ${matrizHTML(m, f.vista === 'cadena' ? 'CADENA' : 'TIENDA', f.vista === 'tienda' && f.cadena === '*')}
+        ${matrizHTML(m, f.vista === 'cadena' ? 'CADENA' : 'TIENDA', f.vista === 'tienda')}
       </div>`;
     S.matriz = m;
   }
@@ -357,12 +423,13 @@
   /* ================= CAMBIOS ================= */
   function vCambios() {
     const v = $('#v-cambios');
-    const D = datos();
-    if (!D) { v.innerHTML = barraFuente() + sinDatos(); return; }
+    const D0 = datos();
+    if (!D0) { v.innerHTML = barraFuente() + sinDatos(); return; }
+    const D = datosFiltrados(D0);
     const r = C.cambios(D, cfg, S.camb.carga);
     const maxU = Math.max(1, ...r.porClave.map((x) => x.u));
     const w = (p) => p != null && p >= 2.5 ? 'color:var(--warn)' : 'color:var(--tx2)';
-    v.innerHTML = barraFuente() + `
+    v.innerHTML = barraFuente() + barraFiltros(D0) + `
       <div class="bar">
         <h1 class="t">Cambios despachados</h1>
         <span class="dim" style="font-size:13px;align-self:center">corte ${esc(fechaTxt(D.corteDia))} ${C.hora(D.corteMin)}</span>
@@ -718,6 +785,14 @@
         case 'abrir': $('#fileInput').click(); break;
         case 'solo': S.solo = b.dataset.v === '1'; vResumen(); break;
         case 'turno': S.turno = b.dataset.v; vResumen(); break;
+        case 'whatsapp': {
+          if (!S.canvas) return toast('No hay imagen para enviar.', 'bad');
+          const r = await IMG.compartir(S.canvas, 'Resumen ' + S.turno + ' ' + S.res.fecha + '.jpg', S.res.titulo);
+          if (r === 'compartido') toast('Imagen enviada.', 'ok');
+          else if (r === 'copiado') toast('Este equipo no tiene el menú de compartir: la imagen quedó copiada, pégala en WhatsApp con Ctrl+V.');
+          else if (r === 'descargado') toast('Este equipo no tiene el menú de compartir: la imagen se descargó.');
+          break;
+        }
         case 'copiar':
           if (!S.canvas) return toast('No hay imagen para copiar.', 'bad');
           await IMG.copiar(S.canvas); toast('Imagen copiada. Pégala en WhatsApp con Ctrl+V.', 'ok'); break;
@@ -731,21 +806,26 @@
           d.nuevas.forEach((r) => cfg.rutas.push({ ruta: r.ruta, nombreSistema: r.nombre, nombreImagen: '', turno: 'auto', enImagen: false }));
           guardarCfg(); vResumen(); toast('Rutas agregadas en Configuración, fuera de la imagen.', 'ok'); break;
         }
-        case 'vista': S.cad.vista = b.dataset.v; if (b.dataset.v === 'tienda' && S.cad.cadena === '*') S.cad.cadena = (cfg.cadenas[0] || {}).nombre || '*'; vCadenas(); break;
+        case 'vista': S.cad.vista = b.dataset.v; vCadenas(); break;
+        case 'fAbrir': S.fAbierto = S.fAbierto === b.dataset.k ? null : b.dataset.k; pintar(); if (S.fAbierto) { const i = $('.view.on [data-fbusca]'); if (i) i.focus(); } break;
+        case 'fCerrar': S.fAbierto = null; pintar(); break;
+        case 'fLimpiar': S.filtros[b.dataset.k].clear(); S.fAbierto = null; pintar(); break;
+        case 'fVisibles': $$('.view.on .plista .op').forEach((op) => { if (op.style.display !== 'none') { const c = op.querySelector('input'); c.checked = true; S.filtros[b.dataset.k].add(c.value); } }); break;
+        case 'fQuitar': FIL.forEach(([k]) => S.filtros[k].clear()); S.fAbierto = null; pintar(); break;
         case 'expCad': {
           const f = S.cad, m = S.matriz;
-          const base = f.vista === 'cadena' ? 'Cadenas x Clave' : 'Tiendas x Clave ' + (f.cadena === '*' ? 'todas' : f.cadena);
-          await exportar('Cadenas', base + ' ' + datos().corteDia + ' ' + f.carga + '.xlsx', [{ nombre: f.vista === 'cadena' ? 'Cadena x Clave' : 'Tienda x Clave', aoa: aoaMatriz(m, f.vista === 'cadena' ? 'Cadena' : 'Tienda') }]);
+          const base = (f.vista === 'cadena' ? 'Cadenas x Clave' : 'Tiendas x Clave') + (hayFiltros() ? ' (filtrado)' : '');
+          await exportar('Cadenas', base + ' ' + datos().corteDia + ' ' + f.carga + '.xlsx', [{ nombre: f.vista === 'cadena' ? 'Cadena x Clave' : 'Tienda x Clave', aoa: aoaMatriz(m, f.vista === 'cadena' ? 'Cadena' : 'Tienda') }], textoFiltros(datos()));
           break;
         }
         case 'cCarga': S.camb.carga = b.dataset.v; vCambios(); break;
         case 'expCamb': {
           const r = S.cambiosR;
-          await exportar('Cambios', 'Cambios ' + datos().corteDia + ' ' + S.camb.carga + '.xlsx', [
+          await exportar('Cambios', 'Cambios ' + datos().corteDia + ' ' + S.camb.carga + (hayFiltros() ? ' (filtrado)' : '') + '.xlsx', [
             { nombre: 'Por clave', aoa: [['Clave', 'Cambios', 'Normal', '%']].concat(r.porClave.map((x) => [x.codigo, x.u, x.normal, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', r.total, r.normal, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
             { nombre: 'Por ruta', aoa: [['Ruta', 'Nombre', 'Cambios', 'Clientes', '% de su venta']].concat(r.porRuta.map((x) => [x.ruta, x.nombre, x.u, x.clientes, x.pct == null ? '' : +x.pct.toFixed(2)])).concat([['Total', '', r.total, r.clientes, r.pct == null ? '' : +r.pct.toFixed(2)]]) },
             { nombre: 'Por cliente', aoa: [['Cliente', 'Cadena', 'Ruta', 'Nombre ruta', 'Cambios']].concat(r.porCliente.map((x) => [x.cliente, x.cadena, x.ruta, x.rutaNombre, x.u])).concat([['Total', '', '', '', r.total]]) }
-          ]);
+          ], textoFiltros(datos()));
           break;
         }
         case 'verJ': S.verJ = b.dataset.v; vVerif(); break;
@@ -819,6 +899,14 @@
 
   async function onChange(e) {
     const t = e.target;
+    if (t.matches('[data-fk]')) {
+      const set = S.filtros[t.dataset.fk];
+      t.checked ? set.add(t.value) : set.delete(t.value);
+      const btn = t.closest('.msel').querySelector('[data-act=fAbrir]');
+      const nombre = FIL.find(([k]) => k === t.dataset.fk)[1];
+      btn.childNodes.forEach((n) => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = ' ' + nombre + ': ' + (set.size ? set.size : 'todas') + ' '; });
+      return;
+    }
     if (t.matches('[data-fuente]')) {
       try { await abrirCierre(t.value); } catch (err) { toast(err.message, 'bad'); }
       pintar(); return;
@@ -885,6 +973,17 @@
     $('#btnReiniciar').addEventListener('click', reiniciar);
     $('#app').addEventListener('click', onClick);
     $('#app').addEventListener('change', onChange);
+    // Buscar dentro de un filtro sin volver a dibujar la lista
+    $('#app').addEventListener('input', (e) => {
+      if (!e.target.matches('[data-fbusca]')) return;
+      const q = e.target.value.trim().toLowerCase();
+      $$('.view.on .plista .op').forEach((op) => { op.style.display = !q || op.dataset.txt.includes(q) ? '' : 'none'; });
+    });
+    // Clic fuera de un filtro abierto: se aplica y se cierra
+    document.addEventListener('click', (e) => {
+      if (S.fAbierto && !e.target.closest('.msel')) { S.fAbierto = null; if (!e.target.closest('[data-act]') || e.target.closest('.tabs')) pintar(); }
+    }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.fAbierto) { S.fAbierto = null; pintar(); } });
     $('#fileInput').addEventListener('change', (e) => { cargarArchivos(e.target.files); e.target.value = ''; });
     $('#histInput').addEventListener('change', (e) => { if (e.target.files[0]) cargarHistorico(e.target.files[0]); e.target.value = ''; });
     $('#cfgInput').addEventListener('change', (e) => { if (e.target.files[0]) importarCfg(e.target.files[0]); e.target.value = ''; });

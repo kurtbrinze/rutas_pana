@@ -2,12 +2,13 @@
 
 App web (HTML estático, sin compilación) que lee el crudo de Excel del sistema de la panadería y:
 
-- **Resumen**: arma la imagen de rutas AM y PM con el mismo formato de Excel para WhatsApp (copiar al portapapeles o descargar).
+- **Resumen**: arma la imagen de rutas AM y PM con el mismo formato de Excel y la manda con “Enviar por WhatsApp” (menú Compartir del sistema, igual que Cálculo de Producción; si el equipo no lo tiene, la copia o la descarga).
   - AM = líneas del crudo de hoy verificadas hoy (o sin verificar).
   - PM = crudo con fecha de mañana.
   - Lo verificado ayer (carga PM de ayer) no se vuelve a reportar.
   - Filtro: todos los clientes de la ruta o solo supermercados.
 - **Cadenas**: Cadena × Clave y Tienda × Clave, con totales por fila y columna.
+- **Filtros** (Cadenas y Cambios, compartidos): rutas, cadenas, tiendas e ítems, en cascada; se exportan en una hoja “Filtros”.
 - **Cambios**: por clave, ruta y cliente, con % sobre la venta normal.
 - **Verificación**: vales, líneas, unidades y ventana de trabajo por verificadora.
 - **Corte para WhatsApp vs. cierre del día**: el corte de la mañana (10:00–10:30) solo sirve para la imagen; no se guarda. Al terminar la operación se cargan los crudos otra vez y se guarda el **cierre del día** (`Hx\Cierres\AAAA-MM-DD.json`), que es el registro oficial: AM del día + cargas de la tarde (crudo de mañana).

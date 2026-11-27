@@ -69,6 +69,20 @@
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
   }
 
+  /** Igual que Cálculo de Producción: abre el menú Compartir del sistema (ahí se elige WhatsApp).
+      Si el equipo no lo tiene, copia la imagen; si tampoco se puede, la descarga. */
+  async function compartir(canvas, nombre, titulo) {
+    const blob = await aBlob(canvas, 'image/jpeg', 0.95);
+    const file = new File([blob], nombre, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: titulo || nombre }); return 'compartido'; }
+      catch (err) { if (err && err.name === 'AbortError') return 'cancelado'; }
+    }
+    try { await copiar(canvas); return 'copiado'; } catch (_) {}
+    await descargar(canvas, nombre);
+    return 'descargado';
+  }
+
   async function descargar(canvas, nombre) {
     const blob = await aBlob(canvas, 'image/jpeg', 0.95);
     const a = document.createElement('a');
@@ -77,5 +91,5 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
-  root.Imagen = { dibujar, copiar, descargar };
+  root.Imagen = { dibujar, copiar, compartir, descargar };
 })(window);
