@@ -1,6 +1,6 @@
 /* Guarda la app para que abra sin señal.
    Al publicar una versión nueva hay que subir CACHE y VERSION en js/ui.js. */
-const CACHE = 'rutaspana-V.7';
+const CACHE = 'rutaspana-V.8';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './css/app.css',
   './js/vendor/xlsx.full.min.js', './js/config.js', './js/core.js', './js/imagen.js', './js/carpetas.js', './js/ui.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-32.png'];
